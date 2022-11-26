@@ -1,5 +1,8 @@
 #include <Windows.h>
 #include <stdint.h>
+#include <tchar.h>
+#include <stdio.h>
+#include <strsafe.h>
 
 static void* BitmapMemory;
 static BITMAPINFO BitmapInfo;
@@ -7,13 +10,64 @@ static int WindowHeight;
 static int WindowWidth;
 static bool Running = true;
 
+enum AssetKind {
+    Image = 0,
+};
 typedef struct {
     char* filename;
-    char* name;
-    void* pixels; // TODO: write format here
-} Image;
+    void* bytes;
+    int size;
+    char* path;
+    AssetKind kind;
+    int width;
+    int height;
+} Asset;
 
-static Image* images = 0;
+void DebugLog(const char* format, ...) {
+    char s[256];
+    va_list argptr;
+    va_start(argptr, format);
+	StringCchVPrintfA(s,
+			256,
+			format,
+			argptr);
+
+	va_end(argptr);
+    OutputDebugString(s);
+    return;
+}
+
+// s can be not terminated
+bool StringEqualTo(char* s, const char* sample) {
+    int i = 0;
+    for (;;) {
+        if (sample[i] == '\0') {
+            break;
+        }
+        if (s[i] != sample[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+void FatalError(const char *text) {
+    LPVOID lpMsgBuf;
+    DWORD dw = GetLastError(); 
+    FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | 
+        FORMAT_MESSAGE_FROM_SYSTEM |
+        FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL,
+        dw,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPTSTR) &lpMsgBuf,
+        0, NULL );
+    DebugLog("%s: %s", text, lpMsgBuf);
+	ExitProcess(1);
+}
+
 
 LRESULT WindowProcA(
     HWND   hWnd,
@@ -61,21 +115,20 @@ LRESULT WindowProcA(
 }
 
 
-
 int WinMain(
     HINSTANCE hInstance,
     HINSTANCE hPrevInstance,
     LPSTR     lpCmdLine,
     int       nShowCmd)
 {
+    int y = 3;
     WNDCLASS windowClass = {};
     windowClass.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
     windowClass.lpfnWndProc = WindowProcA;
     windowClass.hInstance = hInstance;
     windowClass.lpszClassName = "awesomeWindowClass";
     ATOM windowClassId = RegisterClass(&windowClass);
-    HWND hWnd = CreateWindowEx(
-        0,
+    HWND hWnd = CreateWindow(
         windowClass.lpszClassName,
         "Funny little window",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
@@ -85,11 +138,75 @@ int WinMain(
         hInstance,
         NULL);
     if (hWnd == 0) {
-        return 1;
+        FatalError("failed to create a window\n");
     }
-    MSG message = {};
+
+    const int MAX_ASSETS = 1000;
+    int assetsCount = 0;
+    Asset assets[MAX_ASSETS] = {};
+    WIN32_FIND_DATA fileMetadata = {};
+    HANDLE dirHandle = FindFirstFile("assets\\*", &fileMetadata);
+    if (INVALID_HANDLE_VALUE == dirHandle) {
+        FatalError("failed to open assets directory\n");
+    }
+    do {
+        char filePath[MAX_PATH]; 
+        if (StringCchPrintfA(filePath, MAX_PATH, "assets\\%s", fileMetadata.cFileName) < 0) {
+            FatalError("large assets are not supported\n");
+        }   
+        DebugLog("reading file with name=\"%s\" path=\"%s\"\n", fileMetadata.cFileName, (char *)filePath);
+        if (assetsCount == MAX_ASSETS) {
+            FatalError("maximum amount of assets exceeded\n");
+        }
+        if (fileMetadata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            continue;
+        }
+        if ((fileMetadata.nFileSizeHigh) != 0) {
+            FatalError("large assets are not supported\n");
+        }
+        int fileSize = fileMetadata.nFileSizeLow;
+        if (fileSize == 0) {
+            FatalError("assets with size=0 bytes are not supported\n");
+        }
+        HANDLE fileHandle = CreateFile(filePath,               // file to open
+            GENERIC_READ,          // open for reading
+            FILE_SHARE_READ,       // share for reading
+            NULL,                  // default security
+            OPEN_EXISTING,         // existing file only
+            FILE_ATTRIBUTE_NORMAL, // normal file
+            NULL);                 // no attr. template
+        if (fileHandle == 0 || fileHandle == INVALID_HANDLE_VALUE) {
+            FatalError("failed to open asset file\n");
+        }
+        DWORD readBytes;
+        void* assetContent = VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
+        if (ReadFile(fileHandle, assetContent, fileSize, &readBytes, NULL) <= 0) {
+            FatalError("failed to read asset content to memory\n");
+        }
+        if (int(readBytes) != fileSize) {
+            FatalError("failed to fully read asset content\n");
+        }
+        if (!StringEqualTo((char*)assetContent, "BM")) {
+            FatalError("invalid bmp header");
+        }
+
+        Asset asset = assets[assetsCount];
+        asset.size = int(fileMetadata.nFileSizeLow);
+        asset.filename = fileMetadata.cFileName;
+        asset.bytes = assetContent;
+        asset.path = (char*)filePath;
+        asset.kind = Image;
+        asset.width = 0;
+
+        assetsCount += 1;
+
+        
+    } while (FindNextFile(dirHandle, &fileMetadata) != 0);
+
+    
     int x = 0;
     while (Running) {
+        MSG message = {};
         while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
             if (message.message == WM_QUIT) {
                 Running = false;
