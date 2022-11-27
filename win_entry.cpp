@@ -271,10 +271,23 @@ int WinMain(
             int x = i % WindowWidth;
             int y = i / WindowHeight; 
 
+            
 			int32_t pixel = 0;
 			int8_t* colors = (int8_t*)&pixel;
-            colors[0] = y + timeframe;
-		    BitmapMemory[i] = pixel;
+            
+            colors[0] = y * 3 + timeframe ^ 2 - x ^ 2 / 10;
+            colors[1] = x + timeframe * 1.5 + y * timeframe / 10;
+            colors[2] = y ^ 2 / 3 + timeframe + x * timeframe / 4;
+            if ((timeframe % 100) < 50) {
+				colors[2] = x ^ 3 + timeframe ^ 2 - timeframe ^ 2 / 10;
+				colors[3] = timeframe / 10;
+				colors[1] = timeframe ^ 3 + timeframe / 4;
+            }
+
+
+           
+            
+            BitmapMemory[i] = pixel;
         }
 
         StretchDIBits(
