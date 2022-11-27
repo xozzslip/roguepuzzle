@@ -46,7 +46,7 @@ bool StringEqualTo(char* s, const char* sample) {
     return true;
 }
 
-void FatalError(const char *text) {
+void FatalError(const char *format, ...) {
     LPVOID lpMsgBuf;
     DWORD dw = GetLastError(); 
     FormatMessage(
@@ -58,14 +58,24 @@ void FatalError(const char *text) {
         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
         (LPTSTR) &lpMsgBuf,
         0, NULL );
-    DebugLog("%s: %s", text, lpMsgBuf);
+
+    char s[256];
+    va_list argptr;
+    va_start(argptr, format);
+	StringCchVPrintfA(s,
+			256,
+			format,
+			argptr);
+
+	va_end(argptr);
+    DebugLog("%s: %s", s, lpMsgBuf);
 	ExitProcess(1);
 }
 
 
 void ParseBMP(uint8_t* bytes, int bytesCount, Image* image) {
 	if (!StringEqualTo((char*)bytes, "BM")) {
-		FatalError("invalid bmp header");
+		FatalError("invalid bmp header\n");
 	}
 	int headerSize = *((int32_t*)(bytes + 14));
 	int bitsPerPixel = *((int16_t*)(bytes + 28));
@@ -75,27 +85,27 @@ void ParseBMP(uint8_t* bytes, int bytesCount, Image* image) {
 	int height = *((int32_t*)(bytes + 22));
 	int compression = *((int32_t*)(bytes + 30));
 	if (bytesCount!= bmpSize) {
-		FatalError("size of bitmap on the disk and in header are not equal");
+		FatalError("size of bitmap on the disk and in header are not equal\n");
 	}
 	if (headerSize != 40) {
-		FatalError("unsupported bmp header format, now only BITMAPINFOHEADER is supported");
+		FatalError("unsupported bmp header format, now only BITMAPINFOHEADER is supported, received %d bytes header insted of 40\n", headerSize);
 	}
 	if (pixelsOffset != headerSize + 14) {
-		FatalError("bmp has invalid pixelsOffsset and headerSize");
+		FatalError("bmp has invalid pixelsOffsset and headerSize\n");
 	}
 	if (compression != 0) {
-		FatalError("compressed are not supported");
+		FatalError("compressed are not supported\n");
 	}
 	if ((bitsPerPixel % 8) != 0) {
-		FatalError("unsupported bmp format, bits per pixel must be devidible by 8");
+		FatalError("unsupported bmp format, bits per pixel must be devidible by 8\n");
 	}
 	if (bitsPerPixel != 24) {
-		FatalError("unsupported bmp format, only 24 bits per pixel are available");
+		FatalError("unsupported bmp format, only 24 bits per pixel are available\n");
 	}
 	int bytesPerPixel = bitsPerPixel / 8;
 	uint32_t *pixels = (uint32_t *)VirtualAlloc(0, width * height * 4, MEM_COMMIT, PAGE_READWRITE);
     if (pixels == NULL) {
-        FatalError("failed to allocate array for bmp pixels");
+        FatalError("failed to allocate array for bmp pixels\n");
     }
 	int oneRowSize = bytesPerPixel * width;
 	int allignedRowSize = oneRowSize;
@@ -103,7 +113,7 @@ void ParseBMP(uint8_t* bytes, int bytesCount, Image* image) {
 		allignedRowSize = ((oneRowSize / 4) + 1) * 4;
 	}
 	if (allignedRowSize * height + pixelsOffset != bytesCount) {
-		FatalError("bmp file size is not equal to estimated header size + pixels size");
+		FatalError("bmp file size is not equal to estimated header size + pixels size\n");
 	}
 	// pixels stored bottom to top
     for (int i = 0; i < height; i++) {
@@ -116,7 +126,7 @@ void ParseBMP(uint8_t* bytes, int bytesCount, Image* image) {
 			uint8_t red = *(((uint8_t *)&pixel) + 2);
             uint8_t unused = *(((uint8_t*)&pixel) + 3);
             pixel = pixel & 0x00ffffff;
-            DebugLog("pixel x=%d y=%d p=%x b=%x g=%x r=%x u=%x\n", j, i, pixel, blue, green, red, unused);
+            // DebugLog("pixel x=%d y=%d p=%x b=%x g=%x r=%x u=%x\n", j, i, pixel, blue, green, red, unused);
             pixels[i * width + j] = pixel;
 		}
 	}
@@ -228,9 +238,9 @@ int WinMain(
         if (int(readBytes) != fileSize) {
             FatalError("failed to fully read asset content\n");
         }
-        Image image = images[imagesCount];
-        ParseBMP(assetContent, fileSize, &image);
-        image.name = fileName;
+        Image *image = &images[imagesCount];
+        ParseBMP(assetContent, fileSize, image);
+        image->name = fileName;
         imagesCount += 1;
         VirtualFree(assetContent, 0, MEM_RELEASE);
 
@@ -268,26 +278,12 @@ int WinMain(
         timeframe++;
 
         for (int i = 0; i < WindowWidth * WindowHeight; i++) {
-            int x = i % WindowWidth;
-            int y = i / WindowHeight; 
-
-            
-			int32_t pixel = 0;
-			int8_t* colors = (int8_t*)&pixel;
-            
-            colors[0] = y * 3 + timeframe ^ 2 - x ^ 2 / 10;
-            colors[1] = x + timeframe * 1.5 + y * timeframe / 10;
-            colors[2] = y ^ 2 / 3 + timeframe + x * timeframe / 4;
-            if ((timeframe % 100) < 50) {
-				colors[2] = x ^ 3 + timeframe ^ 2 - timeframe ^ 2 / 10;
-				colors[3] = timeframe / 10;
-				colors[1] = timeframe ^ 3 + timeframe / 4;
-            }
-
-
-           
-            
-            BitmapMemory[i] = pixel;
+            int y = i / WindowWidth; 
+            int x = i - y * WindowWidth + timeframe; 
+            int imageX = x % image.width;
+            int imageY = y % image.height;
+            int imageI = imageX + imageY * image.width;
+            BitmapMemory[i] = image.pixels[imageI];
         }
 
         StretchDIBits(
