@@ -4,24 +4,18 @@
 #include <stdio.h>
 #include <strsafe.h>
 
-static void* BitmapMemory;
+static uint32_t* BitmapMemory;
 static BITMAPINFO BitmapInfo;
 static int WindowHeight;
 static int WindowWidth;
 static bool Running = true;
 
-enum AssetKind {
-    Image = 0,
-};
 typedef struct {
-    char* filename;
-    void* bytes;
-    int size;
-    char* path;
-    AssetKind kind;
+    char* name;
     int width;
     int height;
-} Asset;
+    uint32_t* pixels;
+} Image;
 
 void DebugLog(const char* format, ...) {
     char s[256];
@@ -69,6 +63,71 @@ void FatalError(const char *text) {
 }
 
 
+void ParseBMP(uint8_t* bytes, int bytesCount, Image* image) {
+	if (!StringEqualTo((char*)bytes, "BM")) {
+		FatalError("invalid bmp header");
+	}
+	int headerSize = *((int32_t*)(bytes + 14));
+	int bitsPerPixel = *((int16_t*)(bytes + 28));
+	int bmpSize = *((int32_t*)(bytes + 2));
+	int pixelsOffset = *((int32_t*)(bytes + 10));
+	int width = *((int32_t*)(bytes + 18));
+	int height = *((int32_t*)(bytes + 22));
+	int compression = *((int32_t*)(bytes + 30));
+	if (bytesCount!= bmpSize) {
+		FatalError("size of bitmap on the disk and in header are not equal");
+	}
+	if (headerSize != 40) {
+		FatalError("unsupported bmp header format, now only BITMAPINFOHEADER is supported");
+	}
+	if (pixelsOffset != headerSize + 14) {
+		FatalError("bmp has invalid pixelsOffsset and headerSize");
+	}
+	if (compression != 0) {
+		FatalError("compressed are not supported");
+	}
+	if ((bitsPerPixel % 8) != 0) {
+		FatalError("unsupported bmp format, bits per pixel must be devidible by 8");
+	}
+	if (bitsPerPixel != 24) {
+		FatalError("unsupported bmp format, only 24 bits per pixel are available");
+	}
+	int bytesPerPixel = bitsPerPixel / 8;
+	uint32_t *pixels = (uint32_t *)VirtualAlloc(0, width * height * 4, MEM_COMMIT, PAGE_READWRITE);
+    if (pixels == NULL) {
+        FatalError("failed to allocate array for bmp pixels");
+    }
+	int oneRowSize = bytesPerPixel * width;
+	int allignedRowSize = oneRowSize;
+	if (oneRowSize % 4 != 0) {
+		allignedRowSize = ((oneRowSize / 4) + 1) * 4;
+	}
+	if (allignedRowSize * height + pixelsOffset != bytesCount) {
+		FatalError("bmp file size is not equal to estimated header size + pixels size");
+	}
+	// pixels stored bottom to top
+    for (int i = 0; i < height; i++) {
+		int offset = pixelsOffset + allignedRowSize * (height - i - 1);
+		for (int j = 0; j < width; j++) {
+            uint32_t pixel = *(uint32_t*)(bytes + offset + j * bytesPerPixel);
+            
+			uint8_t blue = *((uint8_t *)&pixel);
+			uint8_t green = *(((uint8_t *)&pixel) + 1);
+			uint8_t red = *(((uint8_t *)&pixel) + 2);
+            uint8_t unused = *(((uint8_t*)&pixel) + 3);
+            pixel = pixel & 0x00ffffff;
+            DebugLog("pixel x=%d y=%d p=%x b=%x g=%x r=%x u=%x\n", j, i, pixel, blue, green, red, unused);
+            pixels[i * width + j] = pixel;
+		}
+	}
+	image->width = width;
+	image->height = height;
+    image->pixels = pixels;
+    DebugLog("parsed bmp image width=%d height=%d headerSize=%d bitsPerPixel=%d pixelsOffset=%d allignedRowSize=%d\n", width, height, headerSize, bitsPerPixel, pixelsOffset, allignedRowSize);
+    return;
+}
+
+
 LRESULT WindowProcA(
     HWND   hWnd,
     UINT   msg,
@@ -84,7 +143,7 @@ LRESULT WindowProcA(
         if (BitmapMemory) {
             VirtualFree(BitmapMemory, 0, MEM_RELEASE);
         }
-        BitmapMemory = VirtualAlloc(0, 4 * width * height, MEM_COMMIT, PAGE_READWRITE);
+        BitmapMemory = (uint32_t *) VirtualAlloc(0, 4 * width * height, MEM_COMMIT, PAGE_READWRITE);
         BitmapInfo.bmiHeader.biSize = sizeof(BitmapInfo.bmiHeader);
         BitmapInfo.bmiHeader.biWidth = width;
         BitmapInfo.bmiHeader.biHeight = -height;
@@ -115,13 +174,68 @@ LRESULT WindowProcA(
 }
 
 
+
+
 int WinMain(
     HINSTANCE hInstance,
     HINSTANCE hPrevInstance,
     LPSTR     lpCmdLine,
     int       nShowCmd)
 {
-    int y = 3;
+    const int MAX_IMAGES = 1000;
+    int imagesCount = 0;
+    Image images[MAX_IMAGES] = {};
+    WIN32_FIND_DATA fileMetadata = {};
+    HANDLE dirHandle = FindFirstFile("assets\\*", &fileMetadata);
+    if (INVALID_HANDLE_VALUE == dirHandle) {
+        FatalError("failed to open assets directory\n");
+    }
+    do {
+        char filePath[MAX_PATH]; 
+        if (StringCchPrintfA(filePath, MAX_PATH, "assets\\%s", fileMetadata.cFileName) < 0) {
+            FatalError("large assets are not supported\n");
+        }   
+        DebugLog("reading file with name=\"%s\" path=\"%s\"\n", fileMetadata.cFileName, (char *)filePath);
+        if (imagesCount == MAX_IMAGES) {
+            FatalError("maximum amount of assets exceeded\n");
+        }
+        if (fileMetadata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            continue;
+        }
+        if ((fileMetadata.nFileSizeHigh) != 0) {
+            FatalError("large assets are not supported\n");
+        }
+        int fileSize = fileMetadata.nFileSizeLow;
+        if (fileSize == 0) {
+            FatalError("assets with size=0 bytes are not supported\n");
+        }
+        char* fileName = fileMetadata.cFileName;
+        HANDLE fileHandle = CreateFile(filePath,               // file to open
+            GENERIC_READ,          // open for reading
+            FILE_SHARE_READ,       // share for reading
+            NULL,                  // default security
+            OPEN_EXISTING,         // existing file only
+            FILE_ATTRIBUTE_NORMAL, // normal file
+            NULL);                 // no attr. template
+        if (fileHandle == 0 || fileHandle == INVALID_HANDLE_VALUE) {
+            FatalError("failed to open asset file\n");
+        }
+        DWORD readBytes;
+        uint8_t* assetContent = (uint8_t *) VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
+        if (ReadFile(fileHandle, assetContent, fileSize, &readBytes, NULL) <= 0) {
+            FatalError("failed to read asset content to memory\n");
+        }
+        if (int(readBytes) != fileSize) {
+            FatalError("failed to fully read asset content\n");
+        }
+        Image image = images[imagesCount];
+        ParseBMP(assetContent, fileSize, &image);
+        image.name = fileName;
+        imagesCount += 1;
+        VirtualFree(assetContent, 0, MEM_RELEASE);
+
+    } while (FindNextFile(dirHandle, &fileMetadata) != 0);
+    
     WNDCLASS windowClass = {};
     windowClass.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
     windowClass.lpfnWndProc = WindowProcA;
@@ -140,71 +254,8 @@ int WinMain(
     if (hWnd == 0) {
         FatalError("failed to create a window\n");
     }
-
-    const int MAX_ASSETS = 1000;
-    int assetsCount = 0;
-    Asset assets[MAX_ASSETS] = {};
-    WIN32_FIND_DATA fileMetadata = {};
-    HANDLE dirHandle = FindFirstFile("assets\\*", &fileMetadata);
-    if (INVALID_HANDLE_VALUE == dirHandle) {
-        FatalError("failed to open assets directory\n");
-    }
-    do {
-        char filePath[MAX_PATH]; 
-        if (StringCchPrintfA(filePath, MAX_PATH, "assets\\%s", fileMetadata.cFileName) < 0) {
-            FatalError("large assets are not supported\n");
-        }   
-        DebugLog("reading file with name=\"%s\" path=\"%s\"\n", fileMetadata.cFileName, (char *)filePath);
-        if (assetsCount == MAX_ASSETS) {
-            FatalError("maximum amount of assets exceeded\n");
-        }
-        if (fileMetadata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            continue;
-        }
-        if ((fileMetadata.nFileSizeHigh) != 0) {
-            FatalError("large assets are not supported\n");
-        }
-        int fileSize = fileMetadata.nFileSizeLow;
-        if (fileSize == 0) {
-            FatalError("assets with size=0 bytes are not supported\n");
-        }
-        HANDLE fileHandle = CreateFile(filePath,               // file to open
-            GENERIC_READ,          // open for reading
-            FILE_SHARE_READ,       // share for reading
-            NULL,                  // default security
-            OPEN_EXISTING,         // existing file only
-            FILE_ATTRIBUTE_NORMAL, // normal file
-            NULL);                 // no attr. template
-        if (fileHandle == 0 || fileHandle == INVALID_HANDLE_VALUE) {
-            FatalError("failed to open asset file\n");
-        }
-        DWORD readBytes;
-        void* assetContent = VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
-        if (ReadFile(fileHandle, assetContent, fileSize, &readBytes, NULL) <= 0) {
-            FatalError("failed to read asset content to memory\n");
-        }
-        if (int(readBytes) != fileSize) {
-            FatalError("failed to fully read asset content\n");
-        }
-        if (!StringEqualTo((char*)assetContent, "BM")) {
-            FatalError("invalid bmp header");
-        }
-
-        Asset asset = assets[assetsCount];
-        asset.size = int(fileMetadata.nFileSizeLow);
-        asset.filename = fileMetadata.cFileName;
-        asset.bytes = assetContent;
-        asset.path = (char*)filePath;
-        asset.kind = Image;
-        asset.width = 0;
-
-        assetsCount += 1;
-
-        
-    } while (FindNextFile(dirHandle, &fileMetadata) != 0);
-
-    
-    int x = 0;
+    int timeframe = 0;
+    Image image = images[0];
     while (Running) {
         MSG message = {};
         while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
@@ -214,14 +265,16 @@ int WinMain(
             TranslateMessage(&message);
             DispatchMessage(&message);
         }
-        x++;
+        timeframe++;
 
-        int32_t* pixels = (int32_t*)BitmapMemory;
         for (int i = 0; i < WindowWidth * WindowHeight; i++) {
-            int32_t pixel = 0;
-            int8_t* colors = (int8_t*)&pixel;
-            colors[2] = i + x;
-            pixels[i] = pixel;
+            int x = i % WindowWidth;
+            int y = i / WindowHeight; 
+
+			int32_t pixel = 0;
+			int8_t* colors = (int8_t*)&pixel;
+            colors[0] = y + timeframe;
+		    BitmapMemory[i] = pixel;
         }
 
         StretchDIBits(
