@@ -148,10 +148,7 @@ void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree)
         int scaledX = notRotated.x + newWidth / 2;
         int scaledY = notRotated.y + newHeight / 2;
         if (scaledX >= newWidth || scaledY >= newHeight || scaledX < 0 || scaledY < 0) {
-            uint32_t pixel = 0;
-            uint8_t* green = (((uint8_t*)&pixel) + 1);
-            *green = 255;
-            entity->pixels[i] = pixel; // transparent pixel 
+            entity->pixels[i] = 0; // transparent pixel 
         }
         else {
 			int originX = int(double(scaledX) / scaleX);
@@ -454,8 +451,14 @@ int WinMain(
         FatalError("failed to create a window\n");
     }
     int timeframe = 0;
+
+    if (CreateEntity("curve.bmp") == NULL) {
+        FatalError("failed to create character entity\n");
+    }
+
     if (CreateEntity("test2.bmp") == NULL) {
         FatalError("failed to create character entity\n");
+
     }
 
     if (CreateEntity("test2.bmp") == NULL) {
@@ -466,9 +469,6 @@ int WinMain(
         FatalError("failed to create character entity\n");
     }
 
-    if (CreateEntity("curve.bmp") == NULL) {
-        FatalError("failed to create character entity\n");
-    }
     
     while (Running) {
         MSG message = {};
@@ -487,12 +487,15 @@ int WinMain(
 
 		Entity *entity = &entities[0];
         ShowEntity(entity);
+		MoveEntity(entity, 0, 0);
+		TransformEntity(entity, entity->image->width * 5, entity->image->height * 5, 0);
+
+		entity = &entities[1];
+        ShowEntity(entity);
 		MoveEntity(entity, 200, 200);
 		TransformEntity(entity, entity->image->width * 80, entity->image->height * 80, PI / 4);
 
-
-        
-		entity = &entities[1];
+		entity = &entities[2];
         ShowEntity(entity);
 		MoveEntity(entity, 600, 200);
 		TransformEntity(entity, entity->image->width * 50, entity->image->height * 50, 0);
@@ -509,8 +512,17 @@ int WinMain(
                 int screenX = entity->x + innerX;
                 int screenY = entity->y + innerY;
                 int screenIndex = screenX + screenY * WindowWidth;
-                BitmapMemory[screenIndex] = entity->pixels[innerIndex];
+                if (screenIndex > WindowWidth * WindowHeight) {
+                    continue;
+                }
+                uint32_t currentPixel = BitmapMemory[screenIndex];
+
+                uint32_t entityPixel = entity->pixels[innerIndex];
+                double entityAlpha = double(entityPixel & 0x000000ff) / 255 * timeframe;
+
+                BitmapMemory[screenIndex] = int(double(entityPixel) * entityAlpha + double(currentPixel) * (1 - entityAlpha));
             }
+
         } 
 
         StretchDIBits(
