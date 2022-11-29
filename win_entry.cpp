@@ -456,12 +456,12 @@ int WinMain(
         FatalError("failed to create character entity\n");
     }
 
-    if (CreateEntity("test2.bmp") == NULL) {
+    if (CreateEntity("test3.bmp") == NULL) {
         FatalError("failed to create character entity\n");
 
     }
 
-    if (CreateEntity("test2.bmp") == NULL) {
+    if (CreateEntity("test3.bmp") == NULL) {
         FatalError("failed to create character entity\n");
     }
     
@@ -505,22 +505,24 @@ int WinMain(
             if (!entity->visible) {
                 continue;
             }
-            for (int innerIndex = 0; innerIndex < entity->width * entity->height; innerIndex++) {
-                int innerX = innerIndex % entity->width;
-                int innerY = innerIndex / entity->width;
+            for (int entityIndex = 0; entityIndex < entity->width * entity->height; entityIndex++) {
+                int entityX = entityIndex % entity->width;
+                int entityY = entityIndex / entity->width;
 
-                int screenX = entity->x + innerX;
-                int screenY = entity->y + innerY;
+                int screenX = entity->x + entityX;
+                int screenY = entity->y + entityY;
                 int screenIndex = screenX + screenY * WindowWidth;
-                if (screenIndex > WindowWidth * WindowHeight) {
+                if (screenIndex >= WindowWidth * WindowHeight) {
                     continue;
                 }
-                uint32_t currentPixel = BitmapMemory[screenIndex];
 
-                uint32_t entityPixel = entity->pixels[innerIndex];
-                double entityAlpha = double(entityPixel & 0x000000ff) / 255 * timeframe / 100  + sin(double(timeframe));
+                uint32_t entityPixel = entity->pixels[entityIndex];
+                uint32_t entityAlpha = uint32_t(entityPixel & 0xff000000);
+                if (entityAlpha > 0) { // blend RGB
+                    BitmapMemory[screenIndex] = entityPixel;
+                }
 
-                BitmapMemory[screenIndex] = int(double(entityPixel) * entityAlpha + double(currentPixel) * (1 - entityAlpha));
+
             }
 
         } 
