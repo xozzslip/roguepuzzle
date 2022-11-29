@@ -21,17 +21,24 @@ typedef struct {
 
 typedef struct {
     bool visible;
-    int id;
     int x;
     int y;
-    int scaledWidth; // scaling goes first
-    int scaledHeight;
-    double rotate; // then rotate the image
-    int width; // resulting size of scaled and rotated
+    double rotation;
+    int width; // scale factor
     int height;
     Image *image;
+
+    int effectiveWidth; // after rotation
+    int effectiveHeight;
     uint32_t* pixels; // cache for scaled and rotated image
+
+    // TODO: add for optimization maybe 
+    // previous values, to check should we redraw or not
+    // double _rotation;
+    // int _width;
+    // int _height;
 } Entity;
+
 
 typedef struct {
     bool up;
@@ -40,7 +47,7 @@ typedef struct {
     bool right;
     int mouseX; 
     int mouseY;
-} Input;
+} UserInput;
 
 static uint32_t* BitmapMemory;
 static BITMAPINFO BitmapInfo;
@@ -50,12 +57,11 @@ static bool Running = true;
 static const int MAX_ENTITIES = 1000;
 static Entity entities[MAX_ENTITIES];
 static int entitiesCount;
-static int entityId;
 static const int MAX_IMAGES = 1000;
 static int imagesCount;
 static const double PI = double(3.141592653589793);
 static Image images[MAX_IMAGES];
-static Input UserInput;
+static UserInput Input;
 
 
 bool StringEqualTo(char* s, const char* sample);
@@ -76,27 +82,22 @@ Entity* CreateEntity(const char* bmpName) {
     }
     Entity* entity = &entities[entitiesCount];
     entity->image = image;
-    entity->id = entityId;
-    entity->scaledWidth = image->width;
-    entity->scaledHeight= image->height;
-    entity->rotate = 0;
+    entity->rotation = 0;
     entity->width = image->width;
     entity->height = image->height;
     entity->x = 0;
     entity->y = 0;
-    entity->visible = false;
+    entity->visible = true;
     entity->pixels = (uint32_t*)VirtualAlloc(0, image->width * image->height * 4, MEM_COMMIT, PAGE_READWRITE);
     for (int i = 0; i < image->width * image->height; i++) {
         entity->pixels[i] = image->pixels[i];
     }
-    entityId++;
+    entity->effectiveWidth = image->width;
+    entity->effectiveHeight = image->height;
     entitiesCount++;
     return entity;
 }
 
-void ShowEntity(Entity* entity) {
-    entity->visible = true;
-}
 
 void MoveEntity(Entity* entity, int x, int y) {
     entity->x = x;
@@ -112,20 +113,26 @@ Vector RotateVector(Vector vector, double alpha) {
     return result;
 }
 
-void ScaleEntity(Entity* entity, double times) {
-    int newWidth = int(double(entity->image->width) * times);
-    int newHeight = int(double(entity->image->height) * times);
-    TransformEntity(entity, newWidth, newHeight, entity->rotate);
+void RotateEntityToward(Entity* entity, int pointX, int pointY) {
+    int centerX = entity->x + entity->effectiveWidth / 2;
+    int centerY = entity->y + entity->effectiveHeight / 2;
+    int directionX = pointX - centerX;
+    int directionY = pointY - centerY;
+    double length = sqrt(directionX * directionX + directionY * directionY);
+    double cosAlpha = double(-directionY) / length;
+    double alpha = acos(cosAlpha);
+    entity->rotation = alpha;
 }
 
-void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree) {
+
+void RedrawEntity(Entity* entity) {
     VirtualFree(entity->pixels, 0, MEM_RELEASE);
-    Vector center = { newWidth / 2, newHeight / 2 };
+    Vector center = { entity->width / 2, entity->height/ 2 };
     Vector corners[4] = { 
         {-center.x, -center.y}, 
-        {newWidth - center.x, -center.y},
-        {newWidth - center.x, newHeight - center.y},
-        {-center.x, newHeight - center.y},
+        {entity->width - center.x, -center.y},
+        {entity->width - center.x, entity->height - center.y},
+        {-center.x, entity->height - center.y},
     };
     Vector rotatedCorners[4] = {};
     int minX = INT_MAX;
@@ -133,7 +140,7 @@ void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree)
     int minY = INT_MAX;
     int maxY = -INT_MAX;
     for (int i = 0; i < 4; i++) {
-        Vector rotated = RotateVector(corners[i], degree);
+        Vector rotated = RotateVector(corners[i], entity->rotation);
         rotatedCorners[i] = rotated;
         if (minX > rotated.x) {
             minX = rotated.x;
@@ -154,17 +161,23 @@ void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree)
     entity->pixels = (uint32_t*)VirtualAlloc(0, finalWidth * finalHeight * 4, MEM_COMMIT, PAGE_READWRITE);
     int originWidth = entity->image->width;
     int originHeight = entity->image->height;
-    double scaleX = double(newWidth) / double(originWidth);
-    double scaleY = double(newHeight) / double(originHeight);
+    double scaleX = double(entity->width) / double(originWidth);
+    double scaleY = double(entity->height) / double(originHeight);
     for (int i = 0; i < finalWidth * finalHeight; i++) {
         int x = i % finalWidth;
         int y = i / finalWidth;
         Vector v = { x - finalCenter.x, y - finalCenter.y };
-        Vector notRotated = RotateVector(v, -degree);
-        int scaledX = notRotated.x + newWidth / 2;
-        int scaledY = notRotated.y + newHeight / 2;
-        if (scaledX >= newWidth || scaledY >= newHeight || scaledX < 0 || scaledY < 0) {
-            entity->pixels[i] = 0; // transparent pixel 
+        Vector notRotated = RotateVector(v, -entity->rotation);
+        int scaledX = notRotated.x + entity->width / 2;
+        int scaledY = notRotated.y + entity->height / 2;
+        if (scaledX >= entity->width || scaledY >= entity->height || scaledX < 0 || scaledY < 0) {
+            /*
+            uint32_t pixel = 0;
+            *(((uint8_t*)&pixel) + 1) = 255;
+            *(((uint8_t*)&pixel) + 3) = 255;
+            entity->pixels[i] = pixel; // rotate with green background for debug
+            */
+            entity->pixels[i] = 0; // transparent pixel
         }
         else {
 			int originX = int(double(scaledX) / scaleX);
@@ -174,11 +187,12 @@ void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree)
         }
     }
 
-    entity->width = finalWidth;
-    entity->height = finalHeight;
-    entity->scaledWidth = newWidth;
-    entity->scaledHeight = newHeight;
-    entity->rotate = degree;
+    entity->effectiveWidth = finalWidth;
+    entity->effectiveHeight = finalHeight;
+    // TODO: add for optimization maybe 
+    // entity->_width = entity->width;
+    // entity->_height = entity->height;
+    // entity->_rotation = entity->rotation;
     return;
 }
 
@@ -199,10 +213,6 @@ void ResizeEntity(Entity* entity, int newWidth, int newHeight) {
         int originI = originX + originY * originWidth;
         entity->pixels[i] = entity->image->pixels[originI];
     }
-}
-
-
-void RotateEntity(Entity* entity, double degree) {
 }
 
 
@@ -387,37 +397,37 @@ LRESULT WindowProcA(
             Running = false;
         }
         else if (wParam == 'W') {
-            UserInput.up = true;
+            Input.up = true;
         }
         else if (wParam == 'D') {
-            UserInput.right = true;
+            Input.right = true;
         }
         else if (wParam == 'S') {
-            UserInput.down = true;
+            Input.down = true;
         }
         else if (wParam == 'A') {
-            UserInput.left = true;
+            Input.left = true;
         }
     } break;
     case WM_KEYUP:
     {
         if (wParam == 'W') {
-            UserInput.up = false;
+            Input.up = false;
         }
         else if (wParam == 'D') {
-            UserInput.right = false;
+            Input.right = false;
         }
         else if (wParam == 'S') {
-            UserInput.down = false;
+            Input.down = false;
         }
         else if (wParam == 'A') {
-            UserInput.left = false;
+            Input.left = false;
         }
     } break;
     case WM_MOUSEMOVE:
     {
-		UserInput.mouseX = GET_X_LPARAM(lParam); 
-		UserInput.mouseY = GET_Y_LPARAM(lParam);
+		Input.mouseX = GET_X_LPARAM(lParam); 
+		Input.mouseY = GET_Y_LPARAM(lParam);
     } break;
     default:
         result = DefWindowProc(hWnd, msg, wParam, lParam);
@@ -504,6 +514,7 @@ int WinMain(
     if (hWnd == 0) {
         FatalError("failed to create a window\n");
     }
+    //ShowCursor(0);
     int timeframe = 0;
 
     
@@ -515,15 +526,38 @@ int WinMain(
     Entity* character = CreateEntity("character.bmp");
     if (character == NULL) {
         FatalError("failed to create character entity\n");
-    }
+    } 
 
+    Entity* testEntity = CreateEntity("test3.bmp");
+    if (character == NULL) {
+        FatalError("failed to create character entity\n");
+    } 
 
-	ShowEntity(field);
-	MoveEntity(field, 0, 0);
-	ScaleEntity(field, 3);
+    Entity* testEntity2 = CreateEntity("test3.bmp");
+    if (character == NULL) {
+        FatalError("failed to create character entity\n");
+    } 
 
-	ShowEntity(character);
-	ScaleEntity(character, 5);
+    field->width *= 3;
+    field->height *= 3;
+    field->visible = true;
+	character->x = 20;
+    character->y = 250;
+    character->width *= 2;
+    character->height *= 2;
+    character->visible = true;
+    testEntity->x = 200;
+    testEntity->y = 300;
+    testEntity->rotation = PI / 4;
+    testEntity->width *= 50;
+    testEntity->height *= 50;
+    testEntity->visible = false;
+    testEntity2->x = 600;
+    testEntity2->y = 300;
+    testEntity2->rotation = 0;
+    testEntity2->width *= 50;
+    testEntity2->height *= 50;
+    testEntity2->visible = false;
     
     while (Running) {
         MSG message = {};
@@ -540,15 +574,29 @@ int WinMain(
             BitmapMemory[i] = 0;
         }
         
-	    MoveEntity(character, UserInput.mouseX, UserInput.mouseY);
+        RotateEntityToward(character, Input.mouseX, Input.mouseY);
+        if (Input.up) {
+            character->y -= 5;
+        }
+        if (Input.down) {
+            character->y += 5;
+        }
+        if (Input.left) {
+            character->x -= 5;
+        }
+        if (Input.right) {
+            character->x += 5;
+        }
+
         for (int i = 0; i < entitiesCount; i++) {
 		    Entity * entity = &entities[i];
             if (!entity->visible) {
                 continue;
             }
-            for (int entityIndex = 0; entityIndex < entity->width * entity->height; entityIndex++) {
-                int entityX = entityIndex % entity->width;
-                int entityY = entityIndex / entity->width;
+            RedrawEntity(entity);
+            for (int entityIndex = 0; entityIndex < entity->effectiveWidth * entity->effectiveHeight; entityIndex++) {
+                int entityX = entityIndex % entity->effectiveWidth;
+                int entityY = entityIndex / entity->effectiveWidth;
                 int screenX = entity->x + entityX;
                 int screenY = entity->y + entityY;
                 int screenIndex = screenX + screenY * WindowWidth;
