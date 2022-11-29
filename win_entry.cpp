@@ -518,7 +518,7 @@ int WinMain(
                 uint32_t currentPixel = BitmapMemory[screenIndex];
 
                 uint32_t entityPixel = entity->pixels[innerIndex];
-                double entityAlpha = double(entityPixel & 0x000000ff) / 255 * timeframe;
+                double entityAlpha = double(entityPixel & 0x000000ff) / 255 * timeframe / 100  + sin(double(timeframe));
 
                 BitmapMemory[screenIndex] = int(double(entityPixel) * entityAlpha + double(currentPixel) * (1 - entityAlpha));
             }
