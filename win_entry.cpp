@@ -3,6 +3,7 @@
 #include <tchar.h>
 #include <stdio.h>
 #include <strsafe.h>
+#include <math.h>
 
 
 typedef struct {
@@ -13,12 +14,18 @@ typedef struct {
 } Image;
 
 typedef struct {
+    int x;
+    int y;
+} Vector;
+
+typedef struct {
+    bool visible;
     int id;
     int x;
     int y;
     int scaledWidth; // scaling goes first
     int scaledHeight;
-    float rotate; // then rotate the image
+    double rotate; // then rotate the image
     int width; // resulting size of scaled and rotated
     int height;
     Image *image;
@@ -36,6 +43,7 @@ static int entitiesCount;
 static int entityId;
 static const int MAX_IMAGES = 1000;
 static int imagesCount;
+static const double PI = double(3.141592653589793);
 static Image images[MAX_IMAGES];
 
 
@@ -64,6 +72,7 @@ Entity* CreateEntity(const char* bmpName) {
     entity->height = image->height;
     entity->x = 0;
     entity->y = 0;
+    entity->visible = false;
     entity->pixels = (uint32_t*)VirtualAlloc(0, image->width * image->height * 4, MEM_COMMIT, PAGE_READWRITE);
     for (int i = 0; i < image->width * image->height; i++) {
         entity->pixels[i] = image->pixels[i];
@@ -73,28 +82,114 @@ Entity* CreateEntity(const char* bmpName) {
     return entity;
 }
 
+void ShowEntity(Entity* entity) {
+    entity->visible = true;
+}
+
 void MoveEntity(Entity* entity, int x, int y) {
     entity->x = x;
     entity->y = y;
 }
 
+Vector RotateVector(Vector vector, double alpha) {
+    double cosAlpha = cos(alpha);
+    double sinAlpha = sin(alpha);
+    int newX = int(double(vector.x) * cosAlpha - double(vector.y) * sinAlpha);
+    int newY = int(double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
+    Vector result = { newX, newY };
+    return result;
+}
+
+
+
+void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree) {
+    VirtualFree(entity->pixels, 0, MEM_RELEASE);
+    Vector center = { newWidth / 2, newHeight / 2 };
+    Vector corners[4] = { 
+        {-center.x, -center.y}, 
+        {newWidth - center.x, -center.y},
+        {newWidth - center.x, newHeight - center.y},
+        {-center.x, newHeight - center.y},
+    };
+    Vector rotatedCorners[4] = {};
+    int minX = INT_MAX;
+    int maxX = -INT_MAX;
+    int minY = INT_MAX;
+    int maxY = -INT_MAX;
+    for (int i = 0; i < 4; i++) {
+        Vector rotated = RotateVector(corners[i], degree);
+        rotatedCorners[i] = rotated;
+        if (minX > rotated.x) {
+            minX = rotated.x;
+        }
+        if (maxX < rotated.x) {
+            maxX = rotated.x;
+        }
+        if (minY > rotated.y) {
+            minY = rotated.y;
+        }
+        if (maxY < rotated.y) {
+            maxY = rotated.y;
+        }
+    }
+    int finalWidth = maxX - minX;
+    int finalHeight = maxY - minY;
+    Vector finalCenter = { finalWidth / 2, finalHeight / 2 };
+    entity->pixels = (uint32_t*)VirtualAlloc(0, finalWidth * finalHeight * 4, MEM_COMMIT, PAGE_READWRITE);
+    int originWidth = entity->image->width;
+    int originHeight = entity->image->height;
+    double scaleX = double(newWidth) / double(originWidth);
+    double scaleY = double(newHeight) / double(originHeight);
+    for (int i = 0; i < finalWidth * finalHeight; i++) {
+        int x = i % finalWidth;
+        int y = i / finalWidth;
+        Vector v = { x - finalCenter.x, y - finalCenter.y };
+        Vector notRotated = RotateVector(v, -degree);
+        int scaledX = notRotated.x + newWidth / 2;
+        int scaledY = notRotated.y + newHeight / 2;
+        if (scaledX >= newWidth || scaledY >= newHeight || scaledX < 0 || scaledY < 0) {
+            uint32_t pixel = 0;
+            uint8_t* green = (((uint8_t*)&pixel) + 1);
+            *green = 255;
+            entity->pixels[i] = pixel; // transparent pixel 
+        }
+        else {
+			int originX = int(double(scaledX) / scaleX);
+			int originY = int(double(scaledY) / scaleY);
+			int originI = originX + originY * originWidth;
+			entity->pixels[i] = entity->image->pixels[originI];
+        }
+    }
+
+    entity->width = finalWidth;
+    entity->height = finalHeight;
+    entity->scaledWidth = newWidth;
+    entity->scaledHeight = newHeight;
+    entity->rotate = degree;
+    return;
+}
+
 void ResizeEntity(Entity* entity, int newWidth, int newHeight) {
+    VirtualFree(entity->pixels, 0, MEM_RELEASE);
     entity->pixels = (uint32_t*)VirtualAlloc(0, newWidth * newHeight * 4, MEM_COMMIT, PAGE_READWRITE);
     entity->width = newWidth;
     entity->height = newHeight;
     int originWidth = entity->image->width;
     int originHeight = entity->image->height;
-    float scaleX = float(newWidth) / float(originWidth);
-    float scaleY = float(newHeight) / float(originHeight);
+    double scaleX = double(newWidth) / double(originWidth);
+    double scaleY = double(newHeight) / double(originHeight);
     for (int i = 0; i < newWidth * newHeight; i++) {
         int newX = i % newWidth;
         int newY = i / newWidth;
-        int originX = int(float(newX) / scaleX);
-        int originY = int(float(newY) / scaleY);
+        int originX = int(double(newX) / scaleX);
+        int originY = int(double(newY) / scaleY);
         int originI = originX + originY * originWidth;
         entity->pixels[i] = entity->image->pixels[originI];
     }
+}
 
+
+void RotateEntity(Entity* entity, double degree) {
 }
 
 
@@ -359,14 +454,22 @@ int WinMain(
         FatalError("failed to create a window\n");
     }
     int timeframe = 0;
-    if (CreateEntity("character.bmp") == NULL) {
+    if (CreateEntity("test2.bmp") == NULL) {
         FatalError("failed to create character entity\n");
     }
-    /*
+
+    if (CreateEntity("test2.bmp") == NULL) {
+        FatalError("failed to create character entity\n");
+    }
+    
     if (CreateEntity("curve.bmp") == NULL) {
         FatalError("failed to create character entity\n");
     }
-    */
+
+    if (CreateEntity("curve.bmp") == NULL) {
+        FatalError("failed to create character entity\n");
+    }
+    
     while (Running) {
         MSG message = {};
         while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
@@ -381,9 +484,24 @@ int WinMain(
         for (int i = 0; i < WindowWidth * WindowHeight; i++) {
             BitmapMemory[i] = 0;
         }
+
+		Entity *entity = &entities[0];
+        ShowEntity(entity);
+		MoveEntity(entity, 200, 200);
+		TransformEntity(entity, entity->image->width * 80, entity->image->height * 80, PI / 4);
+
+
+        
+		entity = &entities[1];
+        ShowEntity(entity);
+		MoveEntity(entity, 600, 200);
+		TransformEntity(entity, entity->image->width * 50, entity->image->height * 50, 0);
+        
         for (int i = 0; i < entitiesCount; i++) {
-            Entity *entity = &entities[i];
-            ResizeEntity(entity, WindowWidth, WindowHeight);
+		    entity = &entities[i];
+            if (!entity->visible) {
+                continue;
+            }
             for (int innerIndex = 0; innerIndex < entity->width * entity->height; innerIndex++) {
                 int innerX = innerIndex % entity->width;
                 int innerY = innerIndex / entity->width;
@@ -393,22 +511,7 @@ int WinMain(
                 int screenIndex = screenX + screenY * WindowWidth;
                 BitmapMemory[screenIndex] = entity->pixels[innerIndex];
             }
-        }
-        
-        /*
-        Image image = images[0];
-        for (int i = 0; i < WindowWidth * WindowHeight; i++) {
-            int y = i / WindowWidth; 
-            int x = i - y * WindowWidth; 
-            int imageX = x % image.width;
-            int imageY = y % image.height;
-            int imageI = imageX + imageY * image.width;
-            BitmapMemory[i] = image.pixels[imageI];
-        }
-        */
-
-
-        
+        } 
 
         StretchDIBits(
             GetDC(hWnd),
