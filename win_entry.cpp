@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <strsafe.h>
 #include <math.h>
+#include <windowsx.h>
 
 
 typedef struct {
@@ -32,6 +33,15 @@ typedef struct {
     uint32_t* pixels; // cache for scaled and rotated image
 } Entity;
 
+typedef struct {
+    bool up;
+    bool down;
+    bool left;
+    bool right;
+    int mouseX; 
+    int mouseY;
+} Input;
+
 static uint32_t* BitmapMemory;
 static BITMAPINFO BitmapInfo;
 static int WindowHeight;
@@ -45,9 +55,11 @@ static const int MAX_IMAGES = 1000;
 static int imagesCount;
 static const double PI = double(3.141592653589793);
 static Image images[MAX_IMAGES];
+static Input UserInput;
 
 
 bool StringEqualTo(char* s, const char* sample);
+void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree);
 
 Entity* CreateEntity(const char* bmpName) {
     bool found = false;
@@ -100,7 +112,11 @@ Vector RotateVector(Vector vector, double alpha) {
     return result;
 }
 
-
+void ScaleEntity(Entity* entity, double times) {
+    int newWidth = int(double(entity->image->width) * times);
+    int newHeight = int(double(entity->image->height) * times);
+    TransformEntity(entity, newWidth, newHeight, entity->rotate);
+}
 
 void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree) {
     VirtualFree(entity->pixels, 0, MEM_RELEASE);
@@ -365,6 +381,44 @@ LRESULT WindowProcA(
     {
         Running = false;
     } break;
+    case WM_KEYDOWN:
+    {
+        if (wParam == VK_ESCAPE) {
+            Running = false;
+        }
+        else if (wParam == 'W') {
+            UserInput.up = true;
+        }
+        else if (wParam == 'D') {
+            UserInput.right = true;
+        }
+        else if (wParam == 'S') {
+            UserInput.down = true;
+        }
+        else if (wParam == 'A') {
+            UserInput.left = true;
+        }
+    } break;
+    case WM_KEYUP:
+    {
+        if (wParam == 'W') {
+            UserInput.up = false;
+        }
+        else if (wParam == 'D') {
+            UserInput.right = false;
+        }
+        else if (wParam == 'S') {
+            UserInput.down = false;
+        }
+        else if (wParam == 'A') {
+            UserInput.left = false;
+        }
+    } break;
+    case WM_MOUSEMOVE:
+    {
+		UserInput.mouseX = GET_X_LPARAM(lParam); 
+		UserInput.mouseY = GET_Y_LPARAM(lParam);
+    } break;
     default:
         result = DefWindowProc(hWnd, msg, wParam, lParam);
         break;
@@ -452,23 +506,24 @@ int WinMain(
     }
     int timeframe = 0;
 
-    if (CreateEntity("curve.bmp") == NULL) {
-        FatalError("failed to create character entity\n");
-    }
-
-    if (CreateEntity("test3.bmp") == NULL) {
-        FatalError("failed to create character entity\n");
-
-    }
-
-    if (CreateEntity("test3.bmp") == NULL) {
-        FatalError("failed to create character entity\n");
-    }
     
-    if (CreateEntity("curve.bmp") == NULL) {
+    Entity* field = CreateEntity("curve.bmp");
+    if (field == NULL) {
         FatalError("failed to create character entity\n");
     }
 
+    Entity* character = CreateEntity("character.bmp");
+    if (character == NULL) {
+        FatalError("failed to create character entity\n");
+    }
+
+
+	ShowEntity(field);
+	MoveEntity(field, 0, 0);
+	ScaleEntity(field, 3);
+
+	ShowEntity(character);
+	ScaleEntity(character, 5);
     
     while (Running) {
         MSG message = {};
@@ -484,47 +539,28 @@ int WinMain(
         for (int i = 0; i < WindowWidth * WindowHeight; i++) {
             BitmapMemory[i] = 0;
         }
-
-		Entity *entity = &entities[0];
-        ShowEntity(entity);
-		MoveEntity(entity, 0, 0);
-		TransformEntity(entity, entity->image->width * 5, entity->image->height * 5, 0);
-
-		entity = &entities[1];
-        ShowEntity(entity);
-		MoveEntity(entity, 200, 200);
-		TransformEntity(entity, entity->image->width * 80, entity->image->height * 80, PI / 4);
-
-		entity = &entities[2];
-        ShowEntity(entity);
-		MoveEntity(entity, 600, 200);
-		TransformEntity(entity, entity->image->width * 50, entity->image->height * 50, 0);
         
+	    MoveEntity(character, UserInput.mouseX, UserInput.mouseY);
         for (int i = 0; i < entitiesCount; i++) {
-		    entity = &entities[i];
+		    Entity * entity = &entities[i];
             if (!entity->visible) {
                 continue;
             }
             for (int entityIndex = 0; entityIndex < entity->width * entity->height; entityIndex++) {
                 int entityX = entityIndex % entity->width;
                 int entityY = entityIndex / entity->width;
-
                 int screenX = entity->x + entityX;
                 int screenY = entity->y + entityY;
                 int screenIndex = screenX + screenY * WindowWidth;
-                if (screenIndex >= WindowWidth * WindowHeight) {
+                if (screenX >= WindowWidth || screenY >= WindowHeight || screenX < 0 || screenY < 0) {
                     continue;
                 }
-
                 uint32_t entityPixel = entity->pixels[entityIndex];
                 uint32_t entityAlpha = uint32_t(entityPixel & 0xff000000);
-                if (entityAlpha > 0) { // blend RGB
+                if (entityAlpha > 0) { // TODO: blend RGB
                     BitmapMemory[screenIndex] = entityPixel;
                 }
-
-
             }
-
         } 
 
         StretchDIBits(
