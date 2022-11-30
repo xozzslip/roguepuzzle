@@ -49,6 +49,10 @@ typedef struct {
     int mouseY;
 } UserInput;
 
+bool StringEqualTo(char* s, const char* sample);
+void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree);
+void DebugLog(const char* format, ...);
+
 static uint32_t* BitmapMemory;
 static BITMAPINFO BitmapInfo;
 static int WindowHeight;
@@ -63,9 +67,6 @@ static const double PI = double(3.141592653589793);
 static Image images[MAX_IMAGES];
 static UserInput Input;
 
-
-bool StringEqualTo(char* s, const char* sample);
-void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree);
 
 Entity* CreateEntity(const char* bmpName) {
     bool found = false;
@@ -121,6 +122,10 @@ void RotateEntityToward(Entity* entity, int pointX, int pointY) {
     double length = sqrt(directionX * directionX + directionY * directionY);
     double cosAlpha = double(-directionY) / length;
     double alpha = acos(cosAlpha);
+    DebugLog("angle %f\n", alpha);
+    if (directionX < 0) {
+        alpha = -alpha;
+    }
     entity->rotation = alpha;
 }
 
