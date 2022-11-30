@@ -53,6 +53,7 @@ bool StringEqualTo(char* s, const char* sample);
 void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree);
 void DebugLog(const char* format, ...);
 void FatalError(const char* format, ...);
+Vector EntityCenter(Entity* entity);
 
 static uint32_t* BitmapMemory;
 static BITMAPINFO BitmapInfo;
@@ -100,6 +101,13 @@ Entity* CreateEntity(const char* bmpName) {
     return entity;
 }
 
+Vector EntityCenter(Entity* entity) {
+    int centerX = entity->x + entity->width / 2;
+    int centerY = entity->y + entity->height / 2;
+
+    return { centerX, centerY };
+}
+
 
 void MoveEntity(Entity* entity, int x, int y) {
     entity->x = x;
@@ -109,25 +117,27 @@ void MoveEntity(Entity* entity, int x, int y) {
 Vector RotateVector(Vector vector, double alpha) {
     double cosAlpha = cos(alpha);
     double sinAlpha = sin(alpha);
-    int newX = int(double(vector.x) * cosAlpha - double(vector.y) * sinAlpha);
-    int newY = int(double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
+    // signs are specific for our coordinate system
+    int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
+    int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
     Vector result = { newX, newY };
     return result;
 }
 
-void RotateToward(Entity* entity, int pointX, int pointY) {
-    int centerX = entity->x + entity->width/ 2;
-    int centerY = entity->y + entity->height / 2;
-    int directionX = pointX - centerX;
-    int directionY = pointY - centerY;
-    double length = sqrt(directionX * directionX + directionY * directionY);
-    double cosAlpha = double(-directionY) / length;
+
+double VectorLength(int x, int y) {
+    return sqrt(double(x) * double(x) + double(y) * double(y));
+}
+
+double AngleBetween(int fromX, int fromY, int toX, int toY){
+    double lengthFrom = VectorLength(fromX, fromY);
+    double lengthTo = VectorLength(toX, toY);
+    double cosAlpha = double(fromX) * double(toX) + double(fromY) * double(toY) / lengthFrom / lengthTo;
     double alpha = acos(cosAlpha);
-    DebugLog("angle %f\n", alpha);
-    if (directionX < 0) {
+    if (double(fromX) * double(toY) > double(fromY) * double(toX)) {
         alpha = -alpha;
     }
-    entity->rotation = alpha;
+    return alpha;
 }
 
 
@@ -443,8 +453,6 @@ LRESULT WindowProcA(
 }
 
 
-
-
 int WinMain(
     HINSTANCE hInstance,
     HINSTANCE hPrevInstance,
@@ -575,19 +583,35 @@ int WinMain(
         cursor->x = Input.mouseX - cursor->width / 2;
         cursor->y = Input.mouseY - cursor->height / 2;
         
-        RotateToward(character, Input.mouseX, Input.mouseY);
-        if (Input.up) {
-            character->y -= 5;
+        {
+
+			int characterSpeed = 5;
+            Vector center = EntityCenter(character);
+            int centerX = center.x;
+            int centerY = center.y;
+            int toMouseX = Input.mouseX - centerX;
+            int toMouseY = Input.mouseY - centerY;
+            double angle = AngleBetween(0, -1, toMouseX, toMouseY);
+            character->rotation = angle;		
+            int toMouseLen = VectorLength(toMouseX, toMouseY);
+            
+			if (Input.up) {
+                character->y -= characterSpeed;
+			}
+			if (Input.down) {
+                character->y += characterSpeed;
+			}
+			if (Input.left) {
+                character->x -= characterSpeed;
+			}
+			if (Input.right) {
+                character->x += characterSpeed;
+			}
+            
+        
+
         }
-        if (Input.down) {
-            character->y += 5;
-        }
-        if (Input.left) {
-            character->x -= 5;
-        }
-        if (Input.right) {
-            character->x += 5;
-        }
+        
 
         for (int i = 0; i < entitiesCount; i++) {
 		    Entity * entity = &entities[i];
