@@ -52,6 +52,7 @@ typedef struct {
 bool StringEqualTo(char* s, const char* sample);
 void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree);
 void DebugLog(const char* format, ...);
+void FatalError(const char* format, ...);
 
 static uint32_t* BitmapMemory;
 static BITMAPINFO BitmapInfo;
@@ -79,7 +80,7 @@ Entity* CreateEntity(const char* bmpName) {
         }
     }
     if (!found) {
-        return NULL;
+        FatalError("failed to create entity %s", bmpName);
     }
     Entity* entity = &entities[entitiesCount];
     entity->image = image;
@@ -115,7 +116,7 @@ Vector RotateVector(Vector vector, double alpha) {
 }
 
 void RotateEntityToward(Entity* entity, int pointX, int pointY) {
-    int centerX = entity->x + entity->effectiveWidth / 2;
+    int centerX = entity->x + entity->effectiveHeight/ 2;
     int centerY = entity->y + entity->effectiveHeight / 2;
     int directionX = pointX - centerX;
     int directionY = pointY - centerY;
@@ -130,7 +131,7 @@ void RotateEntityToward(Entity* entity, int pointX, int pointY) {
 }
 
 
-void RedrawEntity(Entity* entity) {
+void RecalculateEntity(Entity* entity) {
     VirtualFree(entity->pixels, 0, MEM_RELEASE);
     Vector center = { entity->width / 2, entity->height/ 2 };
     Vector corners[4] = { 
@@ -519,50 +520,42 @@ int WinMain(
     if (hWnd == 0) {
         FatalError("failed to create a window\n");
     }
-    //ShowCursor(0);
+    ShowCursor(0);
     int timeframe = 0;
 
     
     Entity* field = CreateEntity("curve.bmp");
-    if (field == NULL) {
-        FatalError("failed to create character entity\n");
-    }
-
-    Entity* character = CreateEntity("character.bmp");
-    if (character == NULL) {
-        FatalError("failed to create character entity\n");
-    } 
-
-    Entity* testEntity = CreateEntity("test3.bmp");
-    if (character == NULL) {
-        FatalError("failed to create character entity\n");
-    } 
-
-    Entity* testEntity2 = CreateEntity("test3.bmp");
-    if (character == NULL) {
-        FatalError("failed to create character entity\n");
-    } 
-
     field->width *= 3;
     field->height *= 3;
     field->visible = true;
+
+    Entity* character = CreateEntity("character.bmp");
 	character->x = 20;
     character->y = 250;
     character->width *= 2;
     character->height *= 2;
     character->visible = true;
+
+    Entity* testEntity = CreateEntity("test3.bmp");
     testEntity->x = 200;
     testEntity->y = 300;
     testEntity->rotation = PI / 4;
     testEntity->width *= 50;
     testEntity->height *= 50;
     testEntity->visible = false;
+
+    Entity* testEntity2 = CreateEntity("test3.bmp");
     testEntity2->x = 600;
     testEntity2->y = 300;
     testEntity2->rotation = 0;
     testEntity2->width *= 50;
     testEntity2->height *= 50;
     testEntity2->visible = false;
+
+    Entity* cursor = CreateEntity("cursor.bmp");
+    cursor->width *= 5;
+    cursor->height *= 5;
+
     
     while (Running) {
         MSG message = {};
@@ -578,6 +571,9 @@ int WinMain(
         for (int i = 0; i < WindowWidth * WindowHeight; i++) {
             BitmapMemory[i] = 0;
         }
+
+        cursor->x = Input.mouseX;
+        cursor->y = Input.mouseY;
         
         RotateEntityToward(character, Input.mouseX, Input.mouseY);
         if (Input.up) {
@@ -598,12 +594,14 @@ int WinMain(
             if (!entity->visible) {
                 continue;
             }
-            RedrawEntity(entity);
+            RecalculateEntity(entity);
             for (int entityIndex = 0; entityIndex < entity->effectiveWidth * entity->effectiveHeight; entityIndex++) {
                 int entityX = entityIndex % entity->effectiveWidth;
                 int entityY = entityIndex / entity->effectiveWidth;
-                int screenX = entity->x + entityX;
-                int screenY = entity->y + entityY;
+                int sizeCorrectionX = (entity->effectiveWidth - entity->width) / 2;
+                int sizeCorrectionY = (entity->effectiveHeight - entity->height) / 2;
+                int screenX = entity->x + entityX - sizeCorrectionX;
+                int screenY = entity->y + entityY - sizeCorrectionY;
                 int screenIndex = screenX + screenY * WindowWidth;
                 if (screenX >= WindowWidth || screenY >= WindowHeight || screenX < 0 || screenY < 0) {
                     continue;
