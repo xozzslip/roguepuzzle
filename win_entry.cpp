@@ -115,9 +115,9 @@ Vector RotateVector(Vector vector, double alpha) {
     return result;
 }
 
-void RotateEntityToward(Entity* entity, int pointX, int pointY) {
-    int centerX = entity->x + entity->effectiveHeight/ 2;
-    int centerY = entity->y + entity->effectiveHeight / 2;
+void RotateToward(Entity* entity, int pointX, int pointY) {
+    int centerX = entity->x + entity->width/ 2;
+    int centerY = entity->y + entity->height / 2;
     int directionX = pointX - centerX;
     int directionY = pointY - centerY;
     double length = sqrt(directionX * directionX + directionY * directionY);
@@ -572,10 +572,10 @@ int WinMain(
             BitmapMemory[i] = 0;
         }
 
-        cursor->x = Input.mouseX;
-        cursor->y = Input.mouseY;
+        cursor->x = Input.mouseX - cursor->width / 2;
+        cursor->y = Input.mouseY - cursor->height / 2;
         
-        RotateEntityToward(character, Input.mouseX, Input.mouseY);
+        RotateToward(character, Input.mouseX, Input.mouseY);
         if (Input.up) {
             character->y -= 5;
         }
@@ -607,6 +607,28 @@ int WinMain(
                     continue;
                 }
                 uint32_t entityPixel = entity->pixels[entityIndex];
+                /*
+                if (entityX == entity->effectiveWidth / 2 && entityY == entity->effectiveHeight / 2) {
+					uint32_t pixel = 0;
+					*(((uint8_t*)&pixel) + 1) = 255;
+					*(((uint8_t*)&pixel) + 3) = 255;
+                    entityPixel = pixel;
+                }
+                
+                if (entityX == entity->width / 2 && entityY == entity->height / 2) {
+					uint32_t pixel = 0;
+					*(((uint8_t*)&pixel) + 2) = 255;
+					*(((uint8_t*)&pixel) + 3) = 255;
+                    entityPixel = pixel;
+                }
+                */
+                if (entityX == 0 || entityY == 0 || entityX == entity->effectiveWidth -1 || entityY == entity->effectiveHeight -1 ) {
+					uint32_t pixel = 0;
+					*(((uint8_t*)&pixel) + 2) = 255;
+					*(((uint8_t*)&pixel) + 3) = 255;
+                    entityPixel = pixel;
+                }
+
                 uint32_t entityAlpha = uint32_t(entityPixel & 0xff000000);
                 if (entityAlpha > 0) { // TODO: blend RGB
                     BitmapMemory[screenIndex] = entityPixel;
