@@ -532,7 +532,7 @@ int WinMain(
         FatalError("failed to create a window\n");
     }
     ShowCursor(0);
-    int timeframe = 0;
+    int frame = 0;
 
     Cam cam = {};
     
@@ -567,8 +567,12 @@ int WinMain(
     Entity* cursor = CreateEntity("cursor.bmp");
     cursor->width *= 5;
     cursor->height *= 5;
-    
+
+    uint64_t startMs = GetTickCount64(); 
+    uint64_t frame30Ms = GetTickCount64(); 
+    char fps[10] = {};
     while (Running) {
+        frame++;
         MSG message = {};
         while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
             if (message.message == WM_QUIT) {
@@ -577,7 +581,6 @@ int WinMain(
             TranslateMessage(&message);
             DispatchMessage(&message);
         }
-        timeframe++;
         for (int i = 0; i < WindowWidth * WindowHeight; i++) {
             BitmapMemory[i] = 0;
         }
@@ -622,13 +625,6 @@ int WinMain(
                 continue;
             }
             RecalculateEntity(entity);
-            /*
-			int firstVisibleX = max(0, cam.x - entity->x);
-			int lastVisibleX = min(entity->effectiveWidth, cam.x + cam.width - entity->x);
-			int firstVisibleY = max(0, cam.y - entity->y);
-			int lastVisibleY = min(entity->effectiveHeight, cam.y + cam.height - entity->y);
-            */
-
 			int sizeCorrectionX = (entity->effectiveWidth - entity->width) / 2;
 			int sizeCorrectionY = (entity->effectiveHeight - entity->height) / 2;
             int camXMin = max(0, entity->x - cam.x - sizeCorrectionX);
@@ -670,6 +666,20 @@ int WinMain(
             DIB_RGB_COLORS,
             SRCCOPY
         );
+
+        if (frame % 30 == 0) {
+			uint64_t time = uint64_t(GetTickCount64());
+			uint64_t passedMs = time - frame30Ms;
+            frame30Ms = time;
+			StringCchPrintf(fps, 10, "fps %d ", int(30 / (double(passedMs) / 1000)));
+        }
+		TextOutA(
+          GetDC(hWnd),
+		  0,
+		  0,
+          fps,
+		  10
+		);
     } 
     return 0;
 }
