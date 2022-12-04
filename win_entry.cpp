@@ -41,6 +41,7 @@ typedef struct {
     int y;
     int width; // scale factor
     int height;
+    double rotation;
 } Cam;
 
 typedef struct {
@@ -531,14 +532,15 @@ int WinMain(
     if (hWnd == 0) {
         FatalError("failed to create a window\n");
     }
+    ShowWindow(hWnd, SW_MAXIMIZE);
     ShowCursor(0);
     int frame = 0;
 
     Cam cam = {};
     
     Entity* field = CreateEntity("curve.bmp");
-    field->width *= 15;
-    field->height *= 15;
+    field->width *= 10;
+    field->height *= 10;
     field->visible = true;
 
     Entity* character = CreateEntity("character.bmp");
@@ -567,6 +569,7 @@ int WinMain(
     Entity* cursor = CreateEntity("cursor.bmp");
     cursor->width *= 5;
     cursor->height *= 5;
+    cursor->visible = false;
 
     uint64_t startMs = GetTickCount64(); 
     uint64_t frame30Ms = GetTickCount64(); 
@@ -593,17 +596,21 @@ int WinMain(
         cursor->x = Input.mouseX - cursor->width / 2 + cam.x;
         cursor->y = Input.mouseY - cursor->height / 2 + cam.y;
 
+
+        {
+            POINT c = {WindowWidth/2, WindowHeight/2};
+            ClientToScreen(hWnd, &c);
+            SetCursorPos(c.x, c.y);
+        }
         {
 			int characterSpeed = 5;
             Vector center = EntityCenter(character);
             int centerX = center.x;
             int centerY = center.y;
-            int toMouseX = Input.mouseX - centerX + cam.x;
-            int toMouseY = Input.mouseY - centerY + cam.y;
-            double angle = AngleBetween(0, -1, toMouseX, toMouseY);
-            character->rotation = angle;		
-            int toMouseLen = VectorLength(toMouseX, toMouseY);
-            
+
+            character->rotation -= double(Input.mouseX - WindowWidth / 2) / 1000;
+            cam.rotation = character->rotation;
+
 			if (Input.up) {
                 character->y -= characterSpeed;
 			}
@@ -627,14 +634,22 @@ int WinMain(
             RecalculateEntity(entity);
 			int sizeCorrectionX = (entity->effectiveWidth - entity->width) / 2;
 			int sizeCorrectionY = (entity->effectiveHeight - entity->height) / 2;
+            /*
             int camXMin = max(0, entity->x - cam.x - sizeCorrectionX);
             int camXMax = min(WindowWidth, entity->x - cam.x + entity->effectiveWidth - sizeCorrectionX);
             int camYMin = max(0, entity->y - cam.y - sizeCorrectionY);
             int camYMax = min(WindowHeight, entity->y - cam.y + entity->effectiveHeight- sizeCorrectionY);
-            for (int camY = camYMin; camY < camYMax; camY++) {
-                for (int camX = camXMin; camX < camXMax; camX++) {
-                    int absCamX = camX + cam.x;
-                    int absCamY = camY + cam.y;
+            */
+
+			double cosAlpha = cos(cam.rotation);
+			double sinAlpha = sin(cam.rotation);
+            for (int camY = 0; camY < WindowHeight; camY++) {
+                for (int camX = 0; camX < WindowWidth; camX++) {
+                    Vector vector = {camX - WindowWidth / 2, camY - WindowHeight / 2};
+					int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
+					int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
+                    int absCamX = camX + cam.x + newX - vector.x;
+                    int absCamY = camY + cam.y  + newY - vector.y;
                     int entityX = absCamX - entity->x + sizeCorrectionX; 
                     int entityY = absCamY - entity->y + sizeCorrectionY;
 					if (entityX >= entity->effectiveWidth || entityY >= entity->effectiveHeight || entityX < 0 || entityY < 0) {
