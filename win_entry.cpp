@@ -351,28 +351,25 @@ void RenderToMemory(EntityID cam) {
         if (entityImage.width == 0 || entityImage.height == 0 || entityTransform.width == 0 || entityTransform.height == 0) {
             continue;
         }
-		double cosEntityAngle = cos(entityTransform.angle);
-		double sinEntityAngle = sin(entityTransform.angle);
+        double entityToCamAngle = camTransform.angle - entityTransform.angle;
+		double cosEntityToCamAngle = cos(entityToCamAngle);
+		double sinEntityToCamAngle = sin(entityToCamAngle);
+        int entityToCameraRotatedX = camTransform.centerX - entityTransform.centerX;
+        int entityToCameraRotatedY =  camTransform.centerY - entityTransform.centerY;
+		int entityToCamX = int(double(entityToCameraRotatedX) * cosCamAngle + double(entityToCameraRotatedY) * (-1) * sinCamAngle);
+		int entityToCamY = int(-double(entityToCameraRotatedX) * (-1) * sinCamAngle + double(entityToCameraRotatedY) * cosCamAngle);
         for (int windowX = 0; windowX < WindowWidth; windowX ++) {
             for (int windowY = 0; windowY < WindowHeight; windowY++) {
-                int windowXFromCenter = -WindowWidth / 2 + windowX;
-                int windowYFromCenter = -WindowHeight / 2 + windowY;
-                int windowXFromCenterScaled = windowXFromCenter * camTransform.width / WindowWidth;
-                int windowYFromCenterScaled = windowYFromCenter * camTransform.height / WindowHeight;
-				int windowXFromCenterRotated = int(double(windowXFromCenterScaled) * cosCamAngle + double(windowYFromCenterScaled) * sinCamAngle);
-				int windowYFromCenterRotated = int(-double(windowXFromCenterScaled) * sinCamAngle + double(windowYFromCenterScaled) * cosCamAngle);
-                int globalX = camTransform.centerX + windowXFromCenterRotated;
-                int globalY = camTransform.centerY + windowYFromCenterRotated;
-                int fromEntityCenterX = globalX - entityTransform.centerX;
-                int fromEntityCenterY = globalY - entityTransform.centerY;
-                int fromEntityCenterUnrotatedX = int(double(fromEntityCenterX) * cosEntityAngle + double(fromEntityCenterY) * sinEntityAngle);
-                int fromEntityCenterUnrotatedY = int(-double(fromEntityCenterX) * sinEntityAngle + double(fromEntityCenterY) * cosEntityAngle);
-                // rotate entity back
-                int imageFromCenterX = fromEntityCenterUnrotatedX * entityImage.width / entityTransform.width;
-                int imageFromCenterY = fromEntityCenterUnrotatedY * entityImage.height / entityTransform.height;
-                int imageX = imageFromCenterX + entityImage.width / 2;
-                int imageY = imageFromCenterY + entityImage.height / 2;
-            
+                int pixelX = (windowX - WindowWidth / 2) * camTransform.width / WindowWidth;
+                int pixelY = (windowY - WindowHeight / 2) * camTransform.height / WindowHeight;
+                int entityToPixelX = entityToCamX + pixelX;
+                int entityToPixelY = entityToCamY + pixelY;
+				int entityPixelX = int(double(entityToPixelX) * cosEntityToCamAngle + double(entityToPixelY) * (-1) * sinEntityToCamAngle);
+				int entityPixelY = int(-double(entityToPixelX) * (-1) * sinEntityToCamAngle + double(entityToPixelY) * cosEntityToCamAngle);
+                int imageX = entityPixelX * entityImage.width / entityTransform.width;
+                int imageY = entityPixelY * entityImage.height / entityTransform.height;
+                imageX += entityImage.width / 2;
+                imageY += entityImage.height / 2;
 				if (imageX >= entityImage.width || imageY >= entityImage.height || imageX < 0 || imageY < 0) {
 					continue;
 				}
@@ -383,6 +380,9 @@ void RenderToMemory(EntityID cam) {
                 if (entityAlpha > 0) {
                     BitmapMemory[windowIndex] = pixel;
                 }
+
+
+
             }
         }        
     }
@@ -511,7 +511,7 @@ int WinMain(
     transforms[guyCam] = { 15, 15, PI / 4 , 80, 80 };
 
     EntityID fieldCam = AddEntity();
-    transforms[fieldCam] = { 0, 0, PI / 4, WindowWidth / 5, WindowHeight / 5};
+    transforms[fieldCam] = { 0, 0, 0, WindowWidth / 5, WindowHeight / 5};
 
     uint64_t startMs = GetTickCount64(); 
     uint64_t frame30Ms = GetTickCount64(); 
