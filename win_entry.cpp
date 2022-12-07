@@ -355,29 +355,23 @@ void RenderToMemory(EntityID cam) {
 		double sinEntityAngle = sin(entityTransform.angle);
         for (int windowX = 0; windowX < WindowWidth; windowX ++) {
             for (int windowY = 0; windowY < WindowHeight; windowY++) {
-                Vector windowFromCenter = {
-                    -WindowWidth / 2 + windowX,
-                    -WindowHeight / 2 + windowY
-                };
-                Vector windowFromCenterScaled = {
-                    windowFromCenter.x * camTransform.width / WindowWidth,
-                    windowFromCenter.y * camTransform.height / WindowHeight,
-                };
-                Vector windowFromCenterRotated = RotateVector(windowFromCenterScaled, sinCamAngle, cosCamAngle);
-                int globalX = camTransform.centerX + windowFromCenterRotated.x;
-                int globalY = camTransform.centerY + windowFromCenterRotated.y;
-                Vector fromEntityCenter = {
-                    globalX - entityTransform.centerX,
-                    globalY - entityTransform.centerY,
-                };
+                int windowXFromCenter = -WindowWidth / 2 + windowX;
+                int windowYFromCenter = -WindowHeight / 2 + windowY;
+                int windowXFromCenterScaled = windowXFromCenter * camTransform.width / WindowWidth;
+                int windowYFromCenterScaled = windowYFromCenter * camTransform.height / WindowHeight;
+				int windowXFromCenterRotated = int(double(windowXFromCenterScaled) * cosCamAngle + double(windowYFromCenterScaled) * sinCamAngle);
+				int windowYFromCenterRotated = int(-double(windowXFromCenterScaled) * sinCamAngle + double(windowYFromCenterScaled) * cosCamAngle);
+                int globalX = camTransform.centerX + windowXFromCenterRotated;
+                int globalY = camTransform.centerY + windowYFromCenterRotated;
+                int fromEntityCenterX = globalX - entityTransform.centerX;
+                int fromEntityCenterY = globalY - entityTransform.centerY;
+                int fromEntityCenterUnrotatedX = int(double(fromEntityCenterX) * cosEntityAngle + double(fromEntityCenterY) * sinEntityAngle);
+                int fromEntityCenterUnrotatedY = int(-double(fromEntityCenterX) * sinEntityAngle + double(fromEntityCenterY) * cosEntityAngle);
                 // rotate entity back
-                Vector fromEntityCenterUnrotated = RotateVector(fromEntityCenter, -sinCamAngle, cosCamAngle);
-                Vector imageFromCenter = {
-                    fromEntityCenterUnrotated.x * entityImage.width / entityTransform.width,
-                    fromEntityCenterUnrotated.y * entityImage.height / entityTransform.height,
-                };
-                int imageX = imageFromCenter.x + entityImage.width / 2;
-                int imageY = imageFromCenter.y + entityImage.height / 2;
+                int imageFromCenterX = fromEntityCenterUnrotatedX * entityImage.width / entityTransform.width;
+                int imageFromCenterY = fromEntityCenterUnrotatedY * entityImage.height / entityTransform.height;
+                int imageX = imageFromCenterX + entityImage.width / 2;
+                int imageY = imageFromCenterY + entityImage.height / 2;
             
 				if (imageX >= entityImage.width || imageY >= entityImage.height || imageX < 0 || imageY < 0) {
 					continue;
@@ -528,7 +522,7 @@ int WinMain(
         while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
             if (message.message == WM_QUIT) {
                 Running = false;
-            }   
+            }
             TranslateMessage(&message);
             DispatchMessage(&message);
         }
@@ -539,7 +533,7 @@ int WinMain(
         {
             /* move mice to the right = > mouseDiff>0 => clockwise rotation */
             double mouseDiff = double(Input.mouseX - WindowWidth / 2);
-            POINT c = {WindowWidth/2, WindowHeight/2};
+            POINT c = { WindowWidth / 2, WindowHeight / 2 };
             ClientToScreen(hWnd, &c);
             SetCursorPos(c.x, c.y);
             // transforms[guy].angle -= mouseDiff;
@@ -555,10 +549,13 @@ int WinMain(
             SRCCOPY
         );
 
-		uint64_t time = uint64_t(GetTickCount64());
-		uint64_t passedMs = time - frame30Ms;
-		frame30Ms = time;
-		StringCchPrintf(fps, 10, "fps %d ", int(1 / (double(passedMs) / 1000)));
+        int measureFrame = 10;
+        if (frame % measureFrame == 0) {
+			uint64_t time = uint64_t(GetTickCount64());
+			uint64_t passedMs = time - frame30Ms;
+			frame30Ms = time;
+			StringCchPrintf(fps, 10, "fps %d ", int(measureFrame / (double(passedMs) / 1000)));
+        }
 		TextOutA(
           GetDC(hWnd),
 		  0,
