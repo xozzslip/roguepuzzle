@@ -8,41 +8,36 @@
 
 
 typedef struct {
+    int x;
+    int y;
+} Vector;
+
+typedef struct {
+    int cornerX;
+    int cornerY;
+    int effectiveWidth;
+    int effectiveHeight;
+    double angleSin;
+    double angleCos;
+} RenderDetails;
+
+
+typedef struct {
     char name[MAX_PATH];
     int width;
     int height;
     uint32_t* pixels;
 } Image;
 
-typedef struct {
-    int x;
-    int y;
-} Vector;
 
 typedef struct {
-    bool visible;
-    int x;
-    int y;
-    double rotation;
-    int width; // scale factor
+    int centerX;
+    int centerY;
+    double angle;
+    int width;
     int height;
-    Image *image;
-    int effectiveWidth; // after rotation
-    int effectiveHeight;
-    uint32_t* pixels; // cache for scaled and rotated image
-    double _rotation;
-    int _width;
-    int _height;
-} Entity;
+} Transform;
 
-
-typedef struct {
-    int x;
-    int y;
-    int width; // scale factor
-    int height;
-    double rotation;
-} Cam;
 
 typedef struct {
     bool up;
@@ -53,11 +48,11 @@ typedef struct {
     int mouseY;
 } UserInput;
 
+typedef int EntityID;
+
 bool StringEqualTo(char* s, const char* sample);
-void TransformEntity(Entity* entity, int newWidth, int newHeight, double degree);
 void DebugLog(const char* format, ...);
 void FatalError(const char* format, ...);
-Vector EntityCenter(Entity* entity);
 
 static uint32_t* BitmapMemory;
 static BITMAPINFO BitmapInfo;
@@ -65,20 +60,23 @@ static int WindowHeight;
 static int WindowWidth;
 static bool Running = true;
 static const int MAX_ENTITIES = 1000;
-static Entity entities[MAX_ENTITIES];
+static Transform transforms[MAX_ENTITIES];
+static Image images[MAX_ENTITIES];
+static RenderDetails renderCache[MAX_ENTITIES];
 static int entitiesCount;
 static const int MAX_IMAGES = 1000;
 static int imagesCount;
 static const double PI = double(3.141592653589793);
-static Image images[MAX_IMAGES];
+static Image allImages[MAX_IMAGES];
 static UserInput Input;
+static Vector DefaultOrientation = { 0, 1 };
 
 
-Entity* CreateEntity(const char* bmpName) {
+Image GetImage(const char* bmpName) {
     bool found = false;
     Image* image = NULL;
     for (int i = 0; i < imagesCount; i++) {
-        image = &images[i];
+        image = &allImages[i];
         if (StringEqualTo(image->name, bmpName)) {
             found = true;
             break;
@@ -87,40 +85,11 @@ Entity* CreateEntity(const char* bmpName) {
     if (!found) {
         FatalError("failed to create entity %s", bmpName);
     }
-    Entity* entity = &entities[entitiesCount];
-    entity->image = image;
-    entity->rotation = 0;
-    entity->width = image->width;
-    entity->height = image->height;
-    entity->x = 0;
-    entity->y = 0;
-    entity->visible = true;
-    entity->pixels = (uint32_t*)VirtualAlloc(0, image->width * image->height * 4, MEM_COMMIT, PAGE_READWRITE);
-    for (int i = 0; i < image->width * image->height; i++) {
-        entity->pixels[i] = image->pixels[i];
-    }
-    entity->effectiveWidth = image->width;
-    entity->effectiveHeight = image->height;
-    entitiesCount++;
-    return entity;
-}
-
-Vector EntityCenter(Entity* entity) {
-    int centerX = entity->x + entity->width / 2;
-    int centerY = entity->y + entity->height / 2;
-
-    return { centerX, centerY };
+    return *image;
 }
 
 
-void MoveEntity(Entity* entity, int x, int y) {
-    entity->x = x;
-    entity->y = y;
-}
-
-Vector RotateVector(Vector vector, double alpha) {
-    double cosAlpha = cos(alpha);
-    double sinAlpha = sin(alpha);
+Vector RotateVector(Vector vector, double sinAlpha, double cosAlpha) {
     // signs are specific for our coordinate system
     int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
     int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
@@ -142,99 +111,6 @@ double AngleBetween(int fromX, int fromY, int toX, int toY){
         alpha = -alpha;
     }
     return alpha;
-}
-
-
-void RecalculateEntity(Entity* entity) {
-    if (entity->width == entity->_width && entity->height == entity->_height && entity->rotation == entity->_rotation) {
-        return;
-    }
-    VirtualFree(entity->pixels, 0, MEM_RELEASE);
-    Vector center = { entity->width / 2, entity->height/ 2 };
-    Vector corners[4] = { 
-        {-center.x, -center.y}, 
-        {entity->width - center.x, -center.y},
-        {entity->width - center.x, entity->height - center.y},
-        {-center.x, entity->height - center.y},
-    };
-    Vector rotatedCorners[4] = {};
-    int minX = INT_MAX;
-    int maxX = -INT_MAX;
-    int minY = INT_MAX;
-    int maxY = -INT_MAX;
-    for (int i = 0; i < 4; i++) {
-        Vector rotated = RotateVector(corners[i], entity->rotation);
-        rotatedCorners[i] = rotated;
-        if (minX > rotated.x) {
-            minX = rotated.x;
-        }
-        if (maxX < rotated.x) {
-            maxX = rotated.x;
-        }
-        if (minY > rotated.y) {
-            minY = rotated.y;
-        }
-        if (maxY < rotated.y) {
-            maxY = rotated.y;
-        }
-    }
-    int finalWidth = maxX - minX;
-    int finalHeight = maxY - minY;
-    Vector finalCenter = { finalWidth / 2, finalHeight / 2 };
-    entity->pixels = (uint32_t*)VirtualAlloc(0, finalWidth * finalHeight * 4, MEM_COMMIT, PAGE_READWRITE);
-    int originWidth = entity->image->width;
-    int originHeight = entity->image->height;
-    double scaleX = double(entity->width) / double(originWidth);
-    double scaleY = double(entity->height) / double(originHeight);
-    for (int i = 0; i < finalWidth * finalHeight; i++) {
-        int x = i % finalWidth;
-        int y = i / finalWidth;
-        Vector v = { x - finalCenter.x, y - finalCenter.y };
-        Vector notRotated = RotateVector(v, -entity->rotation);
-        int scaledX = notRotated.x + entity->width / 2;
-        int scaledY = notRotated.y + entity->height / 2;
-        if (scaledX >= entity->width || scaledY >= entity->height || scaledX < 0 || scaledY < 0) {
-            /*
-            uint32_t pixel = 0;
-            *(((uint8_t*)&pixel) + 1) = 255;
-            *(((uint8_t*)&pixel) + 3) = 255;
-            entity->pixels[i] = pixel; // rotate with green background for debug
-            */
-            entity->pixels[i] = 0; // transparent pixel
-        }
-        else {
-			int originX = int(double(scaledX) / scaleX);
-			int originY = int(double(scaledY) / scaleY);
-			int originI = originX + originY * originWidth;
-			entity->pixels[i] = entity->image->pixels[originI];
-        }
-    }
-
-    entity->effectiveWidth = finalWidth;
-    entity->effectiveHeight = finalHeight;
-    entity->_width = entity->width;
-    entity->_height = entity->height;
-    entity->_rotation = entity->rotation;
-    return;
-}
-
-void ResizeEntity(Entity* entity, int newWidth, int newHeight) {
-    VirtualFree(entity->pixels, 0, MEM_RELEASE);
-    entity->pixels = (uint32_t*)VirtualAlloc(0, newWidth * newHeight * 4, MEM_COMMIT, PAGE_READWRITE);
-    entity->width = newWidth;
-    entity->height = newHeight;
-    int originWidth = entity->image->width;
-    int originHeight = entity->image->height;
-    double scaleX = double(newWidth) / double(originWidth);
-    double scaleY = double(newHeight) / double(originHeight);
-    for (int i = 0; i < newWidth * newHeight; i++) {
-        int newX = i % newWidth;
-        int newY = i / newWidth;
-        int originX = int(double(newX) / scaleX);
-        int originY = int(double(newY) / scaleY);
-        int originI = originX + originY * originWidth;
-        entity->pixels[i] = entity->image->pixels[originI];
-    }
 }
 
 
@@ -457,6 +333,68 @@ LRESULT WindowProcA(
     return result;
 }
 
+
+EntityID AddEntity() {
+    EntityID id = entitiesCount;
+    entitiesCount++;
+    return id;
+}
+
+void RenderToMemory(EntityID cam) {
+    // BitmapMemory[screenIndex] = entityPixel;
+    Transform camTransform = transforms[cam];
+	double cosCamAngle = cos(camTransform.angle);
+	double sinCamAngle = sin(camTransform.angle);
+    for (EntityID entity = 0; entity < entitiesCount; entity++) {
+        Transform entityTransform = transforms[entity];
+        Image entityImage = images[entity];
+        if (entityImage.width == 0 || entityImage.height == 0 || entityTransform.width == 0 || entityTransform.height == 0) {
+            continue;
+        }
+		double cosEntityAngle = cos(entityTransform.angle);
+		double sinEntityAngle = sin(entityTransform.angle);
+        for (int windowX = 0; windowX < WindowWidth; windowX ++) {
+            for (int windowY = 0; windowY < WindowHeight; windowY++) {
+                Vector windowFromCenter = {
+                    -WindowWidth / 2 + windowX,
+                    -WindowHeight / 2 + windowY
+                };
+                Vector windowFromCenterScaled = {
+                    windowFromCenter.x * camTransform.width / WindowWidth,
+                    windowFromCenter.y * camTransform.height / WindowHeight,
+                };
+                Vector windowFromCenterRotated = RotateVector(windowFromCenterScaled, sinCamAngle, cosCamAngle);
+                int globalX = camTransform.centerX + windowFromCenterRotated.x;
+                int globalY = camTransform.centerY + windowFromCenterRotated.y;
+                Vector fromEntityCenter = {
+                    globalX - entityTransform.centerX,
+                    globalY - entityTransform.centerY,
+                };
+                // rotate entity back
+                Vector fromEntityCenterUnrotated = RotateVector(fromEntityCenter, -sinCamAngle, cosCamAngle);
+                Vector imageFromCenter = {
+                    fromEntityCenterUnrotated.x * entityImage.width / entityTransform.width,
+                    fromEntityCenterUnrotated.y * entityImage.height / entityTransform.height,
+                };
+                int imageX = imageFromCenter.x + entityImage.width / 2;
+                int imageY = imageFromCenter.y + entityImage.height / 2;
+            
+				if (imageX >= entityImage.width || imageY >= entityImage.height || imageX < 0 || imageY < 0) {
+					continue;
+				}
+                int imageIndex = imageX + imageY * entityImage.width;
+                int windowIndex = windowX + windowY * WindowWidth;
+                uint32_t pixel = entityImage.pixels[imageIndex];
+                uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
+                if (entityAlpha > 0) {
+                    BitmapMemory[windowIndex] = pixel;
+                }
+            }
+        }        
+    }
+}
+
+
 int WinMain(
     HINSTANCE hInstance,
     HINSTANCE hPrevInstance,
@@ -505,7 +443,7 @@ int WinMain(
         if (int(readBytes) != fileSize) {
             FatalError("failed to fully read asset content\n");
         }
-        Image *image = &images[imagesCount];
+        Image *image = &allImages[imagesCount];
         char* fileName = fileMetadata.cFileName;
         UnpackBitmapBytes(assetContent, fileSize, image);
         StringCchCopy(image->name, MAX_PATH, fileName);
@@ -536,19 +474,20 @@ int WinMain(
     ShowCursor(0);
     int frame = 0;
 
+    /*
     Cam cam = {};
     
     Entity* field = CreateEntity("curve.bmp");
     field->width *= 10;
     field->height *= 10;
-    field->visible = true;
+    field->visible = false;
 
     Entity* character = CreateEntity("character.bmp");
 	character->x = 20;
     character->y = 250;
     character->width *= 2;
     character->height *= 2;
-    character->visible = true;
+    character->visible = false;
 
     Entity* testEntity = CreateEntity("test3.bmp");
     testEntity->x = 200;
@@ -558,18 +497,27 @@ int WinMain(
     testEntity->height *= 50;
     testEntity->visible = false;
 
-    Entity* testEntity2 = CreateEntity("test3.bmp");
-    testEntity2->x = 600;
-    testEntity2->y = 300;
-    testEntity2->rotation = 0;
-    testEntity2->width *= 50;
-    testEntity2->height *= 50;
-    testEntity2->visible = false;
-
     Entity* cursor = CreateEntity("cursor.bmp");
     cursor->width *= 5;
     cursor->height *= 5;
     cursor->visible = false;
+    */
+
+
+    EntityID field = AddEntity();
+    images[field] = GetImage("curve.bmp");
+    transforms[field] = { 0, 0, 0, images[field].width * 3, images[field].height * 3};
+
+    EntityID guy = AddEntity();
+    images[guy] = GetImage("character.bmp");
+    transforms[guy] = { 10, 10, PI / 4, 20, 20};
+
+
+    EntityID guyCam = AddEntity();
+    transforms[guyCam] = { 15, 15, PI / 4 , 80, 80 };
+
+    EntityID fieldCam = AddEntity();
+    transforms[fieldCam] = { 0, 0, PI / 4, WindowWidth / 5, WindowHeight / 5};
 
     uint64_t startMs = GetTickCount64(); 
     uint64_t frame30Ms = GetTickCount64(); 
@@ -587,91 +535,16 @@ int WinMain(
         for (int i = 0; i < WindowWidth * WindowHeight; i++) {
             BitmapMemory[i] = 0;
         }
-        
-
-		cam.height = WindowWidth;
-		cam.width = WindowHeight;
-        cam.x = character->x - WindowWidth / 2;
-        cam.y = character->y - WindowHeight /2;
-        cursor->x = Input.mouseX - cursor->width / 2 + cam.x;
-        cursor->y = Input.mouseY - cursor->height / 2 + cam.y;
-
 
         {
+            /* move mice to the right = > mouseDiff>0 => clockwise rotation */
+            double mouseDiff = double(Input.mouseX - WindowWidth / 2);
             POINT c = {WindowWidth/2, WindowHeight/2};
             ClientToScreen(hWnd, &c);
             SetCursorPos(c.x, c.y);
+            // transforms[guy].angle -= mouseDiff;
         }
-        {
-			int characterSpeed = 5;
-            Vector center = EntityCenter(character);
-            int centerX = center.x;
-            int centerY = center.y;
-
-            character->rotation -= double(Input.mouseX - WindowWidth / 2) / 1000;
-            cam.rotation = character->rotation;
-
-			if (Input.up) {
-                character->y -= characterSpeed;
-			}
-			if (Input.down) {
-                character->y += characterSpeed;
-			}
-			if (Input.left) {
-                character->x -= characterSpeed;
-			}
-			if (Input.right) {
-                character->x += characterSpeed;
-			}
-        }
-
-
-        for (int i = 0; i < entitiesCount; i++) {
-		    Entity * entity = &entities[i];
-            if (!entity->visible) {
-                continue;
-            }
-            RecalculateEntity(entity);
-			int sizeCorrectionX = (entity->effectiveWidth - entity->width) / 2;
-			int sizeCorrectionY = (entity->effectiveHeight - entity->height) / 2;
-            /*
-            int camXMin = max(0, entity->x - cam.x - sizeCorrectionX);
-            int camXMax = min(WindowWidth, entity->x - cam.x + entity->effectiveWidth - sizeCorrectionX);
-            int camYMin = max(0, entity->y - cam.y - sizeCorrectionY);
-            int camYMax = min(WindowHeight, entity->y - cam.y + entity->effectiveHeight- sizeCorrectionY);
-            */
-
-			double cosAlpha = cos(cam.rotation);
-			double sinAlpha = sin(cam.rotation);
-            for (int camY = 0; camY < WindowHeight; camY++) {
-                for (int camX = 0; camX < WindowWidth; camX++) {
-                    Vector vector = {camX - WindowWidth / 2, camY - WindowHeight / 2};
-					int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
-					int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
-                    int absCamX = camX + cam.x + newX - vector.x;
-                    int absCamY = camY + cam.y  + newY - vector.y;
-                    int entityX = absCamX - entity->x + sizeCorrectionX; 
-                    int entityY = absCamY - entity->y + sizeCorrectionY;
-					if (entityX >= entity->effectiveWidth || entityY >= entity->effectiveHeight || entityX < 0 || entityY < 0) {
-						continue;
-					}
-                    int entityIndex = entityX + entityY * entity->effectiveWidth;
-                    uint32_t entityPixel = entity->pixels[entityIndex];
-                    int screenIndex = camX + camY * WindowWidth;
-					if (entityX == 0 || entityY == 0 || entityX == entity->effectiveWidth -1 || entityY == entity->effectiveHeight -1 ) {
-						uint32_t pixel = 0;
-						*(((uint8_t*)&pixel) + 2) = 255;
-						*(((uint8_t*)&pixel) + 3) = 255;
-						entityPixel = pixel;
-					}
-					uint32_t entityAlpha = uint32_t(entityPixel & 0xff000000);
-					if (entityAlpha > 0) { // TODO: blend RGB
-						BitmapMemory[screenIndex] = entityPixel;
-					}
-                }
-            }
-        } 
-
+        RenderToMemory(fieldCam);
         StretchDIBits(
             GetDC(hWnd),
             0, 0, WindowWidth, WindowHeight,
@@ -682,12 +555,10 @@ int WinMain(
             SRCCOPY
         );
 
-        if (frame % 30 == 0) {
-			uint64_t time = uint64_t(GetTickCount64());
-			uint64_t passedMs = time - frame30Ms;
-            frame30Ms = time;
-			StringCchPrintf(fps, 10, "fps %d ", int(30 / (double(passedMs) / 1000)));
-        }
+		uint64_t time = uint64_t(GetTickCount64());
+		uint64_t passedMs = time - frame30Ms;
+		frame30Ms = time;
+		StringCchPrintf(fps, 10, "fps %d ", int(1 / (double(passedMs) / 1000)));
 		TextOutA(
           GetDC(hWnd),
 		  0,
