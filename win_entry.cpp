@@ -354,22 +354,28 @@ void RenderToMemory(EntityID cam) {
         double entityToCamAngle = camTransform.angle - entityTransform.angle;
 		double cosEntityToCamAngle = cos(entityToCamAngle);
 		double sinEntityToCamAngle = sin(entityToCamAngle);
-        int entityToCameraRotatedX = camTransform.centerX - entityTransform.centerX;
-        int entityToCameraRotatedY =  camTransform.centerY - entityTransform.centerY;
-		int entityToCamX = int(double(entityToCameraRotatedX) * cosCamAngle + double(entityToCameraRotatedY) * (-1) * sinCamAngle);
-		int entityToCamY = int(-double(entityToCameraRotatedX) * (-1) * sinCamAngle + double(entityToCameraRotatedY) * cosCamAngle);
+        double entityToCameraRotatedX = camTransform.centerX - entityTransform.centerX;
+        double entityToCameraRotatedY =  camTransform.centerY - entityTransform.centerY;
+        double entityToCamX = entityToCameraRotatedX * cosCamAngle + entityToCameraRotatedY * (-1) * sinCamAngle;
+        double entityToCamY = -entityToCameraRotatedX * (-1) * sinCamAngle + entityToCameraRotatedY * cosCamAngle;
+        double camScaleX = double(camTransform.width) / double(WindowWidth);
+        double camScaleY = double(camTransform.height) / double(WindowHeight);
+        double imageScaleX = double(entityImage.width) / double(entityTransform.width);
+        double imageScaleY = double(entityImage.height) / double(entityTransform.height);
         for (int windowX = 0; windowX < WindowWidth; windowX ++) {
             for (int windowY = 0; windowY < WindowHeight; windowY++) {
-                int pixelX = (windowX - WindowWidth / 2) * camTransform.width / WindowWidth;
-                int pixelY = (windowY - WindowHeight / 2) * camTransform.height / WindowHeight;
-                int entityToPixelX = entityToCamX + pixelX;
-                int entityToPixelY = entityToCamY + pixelY;
-				int entityPixelX = int(double(entityToPixelX) * cosEntityToCamAngle + double(entityToPixelY) * (-1) * sinEntityToCamAngle);
-				int entityPixelY = int(-double(entityToPixelX) * (-1) * sinEntityToCamAngle + double(entityToPixelY) * cosEntityToCamAngle);
-                int imageX = entityPixelX * entityImage.width / entityTransform.width;
-                int imageY = entityPixelY * entityImage.height / entityTransform.height;
-                imageX += entityImage.width / 2;
-                imageY += entityImage.height / 2;
+                double pixelX = (double(windowX) - double(WindowWidth) / 2) * camScaleX;
+                double pixelY = (double(windowY) - double(WindowHeight) / 2) * camScaleY;
+                double entityToPixelX = entityToCamX + pixelX;
+                double entityToPixelY = entityToCamY + pixelY;
+				double entityPixelX = entityToPixelX * cosEntityToCamAngle + entityToPixelY * (-1) * sinEntityToCamAngle;
+				double entityPixelY = -entityToPixelX * (-1) * sinEntityToCamAngle + entityToPixelY * cosEntityToCamAngle;
+                double imageXd = entityPixelX * imageScaleX;
+                double imageYd = entityPixelY * imageScaleY;
+                imageXd += double(entityImage.width) / 2;
+                imageYd += double(entityImage.height) / 2;
+                int imageX = int(imageXd);
+                int imageY = int(imageYd);
 				if (imageX >= entityImage.width || imageY >= entityImage.height || imageX < 0 || imageY < 0) {
 					continue;
 				}
