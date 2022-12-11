@@ -419,6 +419,17 @@ inline int DotF(VectorF a, VectorF b) {
     return a.x * b.x + a.y * b.y;
 }
 
+static inline __m128i muly(const __m128i &a, const __m128i &b)
+{
+#ifdef __SSE4_1__  // modern CPU - use SSE 4.1
+    return _mm_mullo_epi32(a, b);
+#else               // old CPU - use SSE 2
+    __m128i tmp1 = _mm_mul_epu32(a,b); /* mul 2,0*/
+    __m128i tmp2 = _mm_mul_epu32( _mm_srli_si128(a,4), _mm_srli_si128(b,4)); /* mul 3,1 */
+    return _mm_unpacklo_epi32(_mm_shuffle_epi32(tmp1, _MM_SHUFFLE (0,0,2,0)), _mm_shuffle_epi32(tmp2, _MM_SHUFFLE (0,0,2,0))); /* shuffle results to [63..0] and pack */
+#endif
+}
+
 void RenderRectangleFast(VectorF center, float angle, float width, float height, Image* texture) {
     LARGE_INTEGER time = qpc();
     VectorF corners[4] = {
@@ -442,20 +453,22 @@ void RenderRectangleFast(VectorF center, float angle, float width, float height,
     __m128 yAxisSquareInv = _mm_set_ps1(1.0 / DotF(yAxis, yAxis));
     __m128 textureWidth = _mm_set_ps1(texture->width);
     __m128 textureHeight = _mm_set_ps1(texture->height);
+    __m128i textureWidthI = _mm_set1_epi32(texture->width);
+    __m128i textureHeightI = _mm_set1_epi32(texture->height);
     for (int y = 0; y < WindowHeight; y++) {
 		__m128 distanceY = _mm_set_ps1(y - origin.y);
         for (int x = 0; x < WindowWidth; x+=4){
-            __m128 distanceX = _mm_sub_ps(_mm_set_ps(x, x + 1, x + 2, x+ 3), originX);
+            __m128 distanceX = _mm_sub_ps(_mm_set_ps(x, x+ 1, x + 2, x + 3), originX);
             __m128 dotXAxis = _mm_add_ps(_mm_mul_ps(distanceX, xAxisX), _mm_mul_ps(distanceY, xAxisY));
             __m128 dotYAxis = _mm_add_ps(_mm_mul_ps(distanceX, yAxisX), _mm_mul_ps(distanceY, yAxisY));
             __m128 u = _mm_mul_ps(dotXAxis, xAxisSquareInv);
             __m128 v = _mm_mul_ps(dotYAxis, yAxisSquareInv);
-            __m128 uInside = _mm_and_ps(_mm_cmpge_ps(u, _mm_set_ps1(0)), _mm_cmple_ps(u, _mm_set_ps1(1)));
-            __m128 vInside = _mm_and_ps(_mm_cmpge_ps(v, _mm_set_ps1(0)), _mm_cmple_ps(v, _mm_set_ps1(1)));
-            __m128i inside = _mm_cvtps_epi32(_mm_and_ps(uInside, vInside));
-            __m128i textureX = _mm_cvtps_epi32(_mm_mul_ps(u, textureWidth));
-            __m128i textureY = _mm_cvtps_epi32(_mm_mul_ps(v, textureHeight));
-            __m128i textureIndex = _mm_add_epi32(textureX, _mm_mullo_epi16(textureY, _mm_set1_epi32(texture->width)));
+            __m128i tx = _mm_cvtps_epi32(_mm_mul_ps(u, textureWidth));
+            __m128i ty = _mm_cvtps_epi32(_mm_mul_ps(v, textureHeight));
+            __m128i textureIndex = _mm_add_epi32(tx, muly(ty, textureWidthI));
+            __m128i txInside = _mm_and_si128(_mm_cmpgt_epi32(tx, _mm_set1_epi32(-1)), _mm_cmplt_epi32(tx, textureWidthI));
+            __m128i tyInside = _mm_and_si128(_mm_cmpgt_epi32(ty, _mm_set1_epi32(-1)), _mm_cmplt_epi32(ty, textureHeightI));
+            __m128i inside = _mm_and_si128(txInside, tyInside);
             int32_t insideA = ((int32_t*)&inside)[0];
             int32_t insideB = ((int32_t*)&inside)[1];
             int32_t insideC = ((int32_t*)&inside)[2];
@@ -709,6 +722,9 @@ int WinMain(
 
     LARGE_INTEGER startMeasure = qpc();
     int passedFrames = 0;
+
+
+    Image fieldImage = GetImage("highres.bmp");
     while (Running) {
         frame++;
         MSG message = {};
@@ -724,6 +740,7 @@ int WinMain(
 		    BitmapMemory[i] = 0;
         }
 
+
         /*
         {
             double mouseDiff = double(Input.mouseX - WindowWidth / 2);
@@ -734,10 +751,9 @@ int WinMain(
 
         }
         */
-        Image fieldImage = GetImage("curve.bmp");
     
         // RenderToMemory(fieldCam);
-        RenderRectangleFast(VectorF{ float(WindowWidth) / 2, float(WindowHeight) / 2 }, 0.001 * float(frame), 1000, 1000, &fieldImage);
+        RenderRectangleFast(VectorF{ float(WindowWidth) / 2, float(WindowHeight) / 2 }, 0, 1000, 600, &fieldImage);
         //RenderRectangle({ WindowWidth / 2, WindowHeight / 2 }, frame * 0.01, 400, 400, &fieldImage);
         StretchDIBits(
             GetDC(hWnd),
