@@ -12,6 +12,24 @@ typedef struct {
     int y;
 } Vector;
 
+inline Vector
+operator-(Vector a, Vector b)
+{
+  Vector result;
+  result.x = a.x - b.x;
+  result.y = a.y - b.y;
+  return result;
+}
+
+inline Vector
+operator+(Vector a, Vector b)
+{
+  Vector result;
+  result.x = a.x + b.x;
+  result.y = a.y + b.y;
+  return result;
+}
+
 typedef struct {
     int cornerX;
     int cornerY;
@@ -89,7 +107,9 @@ Image GetImage(const char* bmpName) {
 }
 
 
-Vector RotateVector(Vector vector, double sinAlpha, double cosAlpha) {
+Vector RotateVector(Vector vector, float alpha) {
+    double cosAlpha = cos(alpha);
+    double sinAlpha = sin(alpha);
     // signs are specific for our coordinate system
     int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
     int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
@@ -340,6 +360,61 @@ EntityID AddEntity() {
     return id;
 }
 
+LARGE_INTEGER qpc() {
+    LARGE_INTEGER startingTime;
+    QueryPerformanceCounter(&startingTime);
+    return startingTime;
+}
+
+uint64_t msSinceQpc(LARGE_INTEGER start) {
+    LARGE_INTEGER frequency, endingTime, elapsed;
+    QueryPerformanceFrequency(&frequency); 
+	QueryPerformanceCounter(&endingTime);
+	elapsed.QuadPart = endingTime.QuadPart - start.QuadPart;
+	elapsed.QuadPart *= 1000;
+	elapsed.QuadPart /= frequency.QuadPart;
+    return elapsed.QuadPart;
+}
+
+
+inline int Dot(Vector a, Vector b) {
+    return a.x * b.x + a.y * b.y;
+}
+
+
+void RenderRectangle(Vector center, float angle, int width, int height, Image* texture) {
+    Vector corners[4] = {
+        -width / 2, -height / 2,
+         width / 2, -height / 2,
+        -width / 2,  height / 2,
+         width / 2,  height / 2,
+    };
+    for (int i = 0; i < 4; i++) {
+        corners[i] = RotateVector(corners[i], angle) + center;
+    }
+    Vector origin = corners[0];
+    Vector xAxis = corners[1] - origin;
+    Vector yAxis = corners[2] - origin;
+    int xAxisSquare = Dot(xAxis, xAxis);
+    int yAxisSquare = Dot(yAxis, yAxis);
+    for (int y = 0; y < WindowHeight; y++) {
+        for (int x = 0; x < WindowWidth; x++) {
+            Vector d = Vector{ x, y } - origin;
+            float u = float(Dot(xAxis, d)) / float(xAxisSquare);
+            float v = float(Dot(yAxis, d)) / float(yAxisSquare);
+            if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
+                int pixelIndex = x + y * WindowWidth;
+                int textureX = int(u * float(texture->width));
+                int textureY = int(v * float(texture->height));
+                int textureIndex = textureX + textureY * texture->width;
+				BitmapMemory[pixelIndex] = texture->pixels[textureIndex];
+            }
+        }
+    }
+
+}
+
+
 void RenderToMemory(EntityID cam) {
     // BitmapMemory[screenIndex] = entityPixel;
     Transform camTransform = transforms[cam];
@@ -351,46 +426,55 @@ void RenderToMemory(EntityID cam) {
         if (entityImage.width == 0 || entityImage.height == 0 || entityTransform.width == 0 || entityTransform.height == 0) {
             continue;
         }
-        double entityToCamAngle = camTransform.angle - entityTransform.angle;
-		double cosEntityToCamAngle = cos(entityToCamAngle);
-		double sinEntityToCamAngle = sin(entityToCamAngle);
-        double entityToCameraRotatedX = camTransform.centerX - entityTransform.centerX;
-        double entityToCameraRotatedY =  camTransform.centerY - entityTransform.centerY;
-        double entityToCamX = entityToCameraRotatedX * cosCamAngle + entityToCameraRotatedY * (-1) * sinCamAngle;
-        double entityToCamY = -entityToCameraRotatedX * (-1) * sinCamAngle + entityToCameraRotatedY * cosCamAngle;
-        double camScaleX = double(camTransform.width) / double(WindowWidth);
-        double camScaleY = double(camTransform.height) / double(WindowHeight);
-        double imageScaleX = double(entityImage.width) / double(entityTransform.width);
-        double imageScaleY = double(entityImage.height) / double(entityTransform.height);
-        for (int windowX = 0; windowX < WindowWidth; windowX ++) {
-            for (int windowY = 0; windowY < WindowHeight; windowY++) {
-                double pixelX = (double(windowX) - double(WindowWidth) / 2) * camScaleX;
-                double pixelY = (double(windowY) - double(WindowHeight) / 2) * camScaleY;
-                double entityToPixelX = entityToCamX + pixelX;
-                double entityToPixelY = entityToCamY + pixelY;
-				double entityPixelX = entityToPixelX * cosEntityToCamAngle + entityToPixelY * (-1) * sinEntityToCamAngle;
-				double entityPixelY = -entityToPixelX * (-1) * sinEntityToCamAngle + entityToPixelY * cosEntityToCamAngle;
-                double imageXd = entityPixelX * imageScaleX;
-                double imageYd = entityPixelY * imageScaleY;
-                imageXd += double(entityImage.width) / 2;
-                imageYd += double(entityImage.height) / 2;
-                int imageX = int(imageXd);
-                int imageY = int(imageYd);
-				if (imageX >= entityImage.width || imageY >= entityImage.height || imageX < 0 || imageY < 0) {
-					continue;
-				}
-                int imageIndex = imageX + imageY * entityImage.width;
-                int windowIndex = windowX + windowY * WindowWidth;
-                uint32_t pixel = entityImage.pixels[imageIndex];
-                uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
-                if (entityAlpha > 0) {
-                    BitmapMemory[windowIndex] = pixel;
-                }
-
+        int yMin = 0;
+        int yMax = WindowHeight;
+        int xMin = 0;
+        int xMax = WindowWidth;
+        for (int y = yMin; y < yMax; y++) {
+            for (int x = xMin; x < xMax; x++) {
+                // u, v - ?
 
 
             }
-        }        
+        }
+
+#if 0
+        double entityToCamAngle = camTransform.angle - entityTransform.angle;
+		double cosEntityToCamAngle = cos(entityToCamAngle);
+		double sinEntityToCamAngle = sin(entityToCamAngle);
+        int entityToCameraRotatedX = camTransform.centerX - entityTransform.centerX;
+        int entityToCameraRotatedY =  camTransform.centerY - entityTransform.centerY;
+		int entityToCamX = int(double(entityToCameraRotatedX) * cosCamAngle + double(entityToCameraRotatedY) * (-1) * sinCamAngle);
+		int entityToCamY = int(-double(entityToCameraRotatedX) * (-1) * sinCamAngle + double(entityToCameraRotatedY) * cosCamAngle);
+        LARGE_INTEGER time = qpc();
+        for (int windowIndex = 0; windowIndex < WindowWidth * WindowHeight; windowIndex++) {
+            int windowX = windowIndex % WindowWidth;
+            int windowY = windowIndex / WindowWidth;
+			int pixelX = ((windowX - WindowWidth / 2) * camTransform.width) /  WindowWidth;
+			int pixelY = ((windowY - WindowHeight / 2) * camTransform.height) / WindowHeight;
+
+			int entityToPixelX = entityToCamX + pixelX;
+			int entityToPixelY = entityToCamY + pixelY; 
+
+			int entityPixelX = int(double(entityToPixelX) * cosEntityToCamAngle + double(entityToPixelY) * (-1) * sinEntityToCamAngle);
+			int entityPixelY = int(-double(entityToPixelX) * (-1) * sinEntityToCamAngle + double(entityToPixelY) * cosEntityToCamAngle);
+
+			entityPixelX += entityTransform.width / 2;
+			entityPixelY += entityTransform.height / 2;
+			int imageX = entityPixelX * entityImage.width / entityTransform.width;
+			int imageY = entityPixelY * entityImage.height / entityTransform.height;
+			if (imageX >= entityImage.width || imageY >= entityImage.height || imageX < 0 || imageY < 0) {
+				continue;
+			}
+			int imageIndex = imageX + imageY * entityImage.width;
+			uint32_t pixel = entityImage.pixels[imageIndex];
+			uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
+			if (entityAlpha > 0) {
+				BitmapMemory[windowIndex] = pixel;
+			}
+        }
+        DebugLog("entity %d passed %dms\n", entity, msSinceQpc(time));
+#endif 
     }
 }
 
@@ -510,19 +594,18 @@ int WinMain(
 
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
-    transforms[guy] = { 10, 10, PI / 4, 20, 20};
+    transforms[guy] = { 10, 10, 0, 20, 20};
 
 
     EntityID guyCam = AddEntity();
     transforms[guyCam] = { 15, 15, PI / 4 , 80, 80 };
 
     EntityID fieldCam = AddEntity();
-    transforms[fieldCam] = { 0, 0, 0, WindowWidth / 5, WindowHeight / 5};
+    transforms[fieldCam] = { 0, 0, PI/ 4, WindowWidth / 5, WindowHeight / 5};
 
-    uint64_t startMs = GetTickCount64(); 
-    uint64_t frame30Ms = GetTickCount64(); 
     char fps[10] = {};
     while (Running) {
+        LARGE_INTEGER startFrame = qpc();
         frame++;
         MSG message = {};
         while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
@@ -532,19 +615,26 @@ int WinMain(
             TranslateMessage(&message);
             DispatchMessage(&message);
         }
+
         for (int i = 0; i < WindowWidth * WindowHeight; i++) {
-            BitmapMemory[i] = 0;
+		    BitmapMemory[i] = 0;
         }
 
+        /*
         {
-            /* move mice to the right = > mouseDiff>0 => clockwise rotation */
             double mouseDiff = double(Input.mouseX - WindowWidth / 2);
             POINT c = { WindowWidth / 2, WindowHeight / 2 };
             ClientToScreen(hWnd, &c);
             SetCursorPos(c.x, c.y);
             // transforms[guy].angle -= mouseDiff;
+
         }
-        RenderToMemory(fieldCam);
+        */
+        Image fieldImage = GetImage("curve.bmp");
+    
+        // RenderToMemory(fieldCam);
+        RenderRectangle({ WindowWidth / 2, WindowHeight / 2 }, 0.01 * float(frame), 600, 600, &fieldImage);
+        // RenderRectangle({ WindowWidth / 2, WindowHeight / 2 }, 0, 400, 400);
         StretchDIBits(
             GetDC(hWnd),
             0, 0, WindowWidth, WindowHeight,
@@ -555,13 +645,10 @@ int WinMain(
             SRCCOPY
         );
 
-        int measureFrame = 10;
-        if (frame % measureFrame == 0) {
-			uint64_t time = uint64_t(GetTickCount64());
-			uint64_t passedMs = time - frame30Ms;
-			frame30Ms = time;
-			StringCchPrintf(fps, 10, "fps %d ", int(measureFrame / (double(passedMs) / 1000)));
-        }
+        
+        uint64_t passedMs = msSinceQpc(startFrame);
+		StringCchPrintf(fps, 10, "fps %d ", int(1 / (double(passedMs) / 1000)));
+
 		TextOutA(
           GetDC(hWnd),
 		  0,
@@ -569,6 +656,7 @@ int WinMain(
           fps,
 		  10
 		);
+        
     } 
     return 0;
 }
