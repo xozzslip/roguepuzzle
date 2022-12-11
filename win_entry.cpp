@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include <intrin.h>
 #include <stdint.h>
 #include <tchar.h>
 #include <stdio.h>
@@ -11,6 +12,11 @@ typedef struct {
     int x;
     int y;
 } Vector;
+
+typedef struct {
+    float x;
+    float y;
+} VectorF;
 
 inline Vector
 operator-(Vector a, Vector b)
@@ -25,6 +31,24 @@ inline Vector
 operator+(Vector a, Vector b)
 {
   Vector result;
+  result.x = a.x + b.x;
+  result.y = a.y + b.y;
+  return result;
+}
+
+inline VectorF
+operator-(VectorF a, VectorF b)
+{
+  VectorF result;
+  result.x = a.x - b.x;
+  result.y = a.y - b.y;
+  return result;
+}
+
+inline VectorF
+operator+(VectorF a, VectorF b)
+{
+  VectorF result;
   result.x = a.x + b.x;
   result.y = a.y + b.y;
   return result;
@@ -114,6 +138,16 @@ Vector RotateVector(Vector vector, float alpha) {
     int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
     int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
     Vector result = { newX, newY };
+    return result;
+}
+
+VectorF RotateVectorF(VectorF vector, float alpha) {
+    double cosAlpha = cos(alpha);
+    double sinAlpha = sin(alpha);
+    // signs are specific for our coordinate system
+    int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
+    int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
+    VectorF result = { newX, newY };
     return result;
 }
 
@@ -381,6 +415,74 @@ inline int Dot(Vector a, Vector b) {
     return a.x * b.x + a.y * b.y;
 }
 
+inline int DotF(VectorF a, VectorF b) {
+    return a.x * b.x + a.y * b.y;
+}
+
+void RenderRectangleFast(VectorF center, float angle, float width, float height, Image* texture) {
+    LARGE_INTEGER time = qpc();
+    VectorF corners[4] = {
+        -width / 2, -height / 2,
+         width / 2, -height / 2,
+        -width / 2,  height / 2,
+         width / 2,  height / 2,
+    };
+    for (int i = 0; i < 4; i++) {
+        corners[i] = RotateVectorF(corners[i], angle) + center;
+    }
+    VectorF origin = corners[0];
+    VectorF xAxis = corners[1] - origin;
+    VectorF yAxis = corners[2] - origin;
+    __m128 originX = _mm_set_ps1(origin.x);
+    __m128 xAxisX = _mm_set_ps1(xAxis.x);
+    __m128 xAxisY = _mm_set_ps1(xAxis.y);
+    __m128 yAxisX = _mm_set_ps1(yAxis.x);
+    __m128 yAxisY = _mm_set_ps1(yAxis.y);
+    __m128 xAxisSquareInv = _mm_set_ps1(1.0 / DotF(xAxis, xAxis));
+    __m128 yAxisSquareInv = _mm_set_ps1(1.0 / DotF(yAxis, yAxis));
+    __m128 textureWidth = _mm_set_ps1(texture->width);
+    __m128 textureHeight = _mm_set_ps1(texture->height);
+    for (int y = 0; y < WindowHeight; y++) {
+		__m128 distanceY = _mm_set_ps1(y - origin.y);
+        for (int x = 0; x < WindowWidth; x+=4){
+            __m128 distanceX = _mm_sub_ps(_mm_set_ps(x, x + 1, x + 2, x+ 3), originX);
+            __m128 dotXAxis = _mm_add_ps(_mm_mul_ps(distanceX, xAxisX), _mm_mul_ps(distanceY, xAxisY));
+            __m128 dotYAxis = _mm_add_ps(_mm_mul_ps(distanceX, yAxisX), _mm_mul_ps(distanceY, yAxisY));
+            __m128 u = _mm_mul_ps(dotXAxis, xAxisSquareInv);
+            __m128 v = _mm_mul_ps(dotYAxis, yAxisSquareInv);
+            __m128 uInside = _mm_and_ps(_mm_cmpge_ps(u, _mm_set_ps1(0)), _mm_cmple_ps(u, _mm_set_ps1(1)));
+            __m128 vInside = _mm_and_ps(_mm_cmpge_ps(v, _mm_set_ps1(0)), _mm_cmple_ps(v, _mm_set_ps1(1)));
+            __m128i inside = _mm_cvtps_epi32(_mm_and_ps(uInside, vInside));
+            __m128i textureX = _mm_cvtps_epi32(_mm_mul_ps(u, textureWidth));
+            __m128i textureY = _mm_cvtps_epi32(_mm_mul_ps(v, textureHeight));
+            __m128i textureIndex = _mm_add_epi32(textureX, _mm_mullo_epi16(textureY, _mm_set1_epi32(texture->width)));
+            int32_t insideA = ((int32_t*)&inside)[0];
+            int32_t insideB = ((int32_t*)&inside)[1];
+            int32_t insideC = ((int32_t*)&inside)[2];
+            int32_t insideD = ((int32_t*)&inside)[3];
+            __m128i pixels = _mm_set1_epi32(0);
+            if (insideA) {
+                ((int32_t*)&pixels)[3] = texture->pixels[((uint32_t*)&textureIndex)[0]];
+            }
+            if (insideB) {
+                ((int32_t*)&pixels)[2] = texture->pixels[((uint32_t*)&textureIndex)[1]];
+            }
+            if (insideC) {
+                ((int32_t*)&pixels)[1] = texture->pixels[((uint32_t*)&textureIndex)[2]];
+            }
+            if (insideD) {
+                ((int32_t*)&pixels)[0] = texture->pixels[((uint32_t*)&textureIndex)[3]];
+            }
+
+            int pixelIndex = x + y * WindowWidth;
+            _mm_store_si128((__m128i*)(BitmapMemory + pixelIndex), pixels);
+        }
+    }
+    DebugLog("rendered rectangle %dms\n", msSinceQpc(time));
+
+
+}
+
 
 void RenderRectangle(Vector center, float angle, int width, int height, Image* texture) {
     Vector corners[4] = {
@@ -395,13 +497,14 @@ void RenderRectangle(Vector center, float angle, int width, int height, Image* t
     Vector origin = corners[0];
     Vector xAxis = corners[1] - origin;
     Vector yAxis = corners[2] - origin;
-    int xAxisSquare = Dot(xAxis, xAxis);
-    int yAxisSquare = Dot(yAxis, yAxis);
+    float xAxisSquareInv = 1.0 / Dot(xAxis, xAxis);
+    float yAxisSquareInv = 1.0 / Dot(yAxis, yAxis);
+
     for (int y = 0; y < WindowHeight; y++) {
-        for (int x = 0; x < WindowWidth; x++) {
+        for (int x = 0; x < WindowWidth; x++){
             Vector d = Vector{ x, y } - origin;
-            float u = float(Dot(xAxis, d)) / float(xAxisSquare);
-            float v = float(Dot(yAxis, d)) / float(yAxisSquare);
+            float u = float(Dot(xAxis, d)) * xAxisSquareInv;
+            float v = float(Dot(yAxis, d)) * yAxisSquareInv;
             if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
                 int pixelIndex = x + y * WindowWidth;
                 int textureX = int(u * float(texture->width));
@@ -411,7 +514,6 @@ void RenderRectangle(Vector center, float angle, int width, int height, Image* t
             }
         }
     }
-
 }
 
 
@@ -604,8 +706,10 @@ int WinMain(
     transforms[fieldCam] = { 0, 0, PI/ 4, WindowWidth / 5, WindowHeight / 5};
 
     char fps[10] = {};
+
+    LARGE_INTEGER startMeasure = qpc();
+    int passedFrames = 0;
     while (Running) {
-        LARGE_INTEGER startFrame = qpc();
         frame++;
         MSG message = {};
         while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
@@ -633,8 +737,8 @@ int WinMain(
         Image fieldImage = GetImage("curve.bmp");
     
         // RenderToMemory(fieldCam);
-        RenderRectangle({ WindowWidth / 2, WindowHeight / 2 }, 0.01 * float(frame), 600, 600, &fieldImage);
-        // RenderRectangle({ WindowWidth / 2, WindowHeight / 2 }, 0, 400, 400);
+        RenderRectangleFast(VectorF{ float(WindowWidth) / 2, float(WindowHeight) / 2 }, 0.001 * float(frame), 1000, 1000, &fieldImage);
+        //RenderRectangle({ WindowWidth / 2, WindowHeight / 2 }, frame * 0.01, 400, 400, &fieldImage);
         StretchDIBits(
             GetDC(hWnd),
             0, 0, WindowWidth, WindowHeight,
@@ -646,9 +750,14 @@ int WinMain(
         );
 
         
-        uint64_t passedMs = msSinceQpc(startFrame);
-		StringCchPrintf(fps, 10, "fps %d ", int(1 / (double(passedMs) / 1000)));
-
+        uint64_t passedMs = msSinceQpc(startMeasure);
+        passedFrames += 1;
+        if (passedMs > 1000) {
+		    StringCchPrintf(fps, 10, "fps %d ", int(passedFrames / (double(passedMs) / 1000)));
+            passedFrames = 0;
+            startMeasure = qpc();
+        }
+    
 		TextOutA(
           GetDC(hWnd),
 		  0,
