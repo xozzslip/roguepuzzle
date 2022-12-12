@@ -31,6 +31,51 @@ operator+(Vector a, Vector b)
   return result;
 }
 
+inline Vector
+operator+=(Vector &a, Vector b)
+{
+  a = a + b;
+  return a;
+}
+
+inline Vector
+operator-=(Vector &a, Vector b)
+{
+  a = a - b;
+  return a;
+}
+
+inline Vector
+operator-(Vector a)
+{
+  Vector result;
+  result.x = -a.x;
+  result.y = -a.y;
+  return result;
+}
+
+
+inline Vector
+operator*(float a, Vector b)
+{
+  Vector result = { a * b.x, a * b.y };
+  return result;
+}
+
+inline Vector
+operator*(Vector b, float a)
+{
+  Vector result = a * b;
+  return result;
+}
+
+inline Vector
+operator*=(Vector &a, float b)
+{
+  a = b * a;
+  return a;
+}
+
 typedef struct {
     char name[MAX_PATH];
     int width;
@@ -54,6 +99,7 @@ typedef struct {
     bool right;
     int mouseX; 
     int mouseY;
+    bool shift;
 } UserInput;
 
 typedef int EntityID;
@@ -101,8 +147,8 @@ Vector RotateVector(Vector vector, float alpha) {
     double cosAlpha = cos(alpha);
     double sinAlpha = sin(alpha);
     // signs are specific for our coordinate system
-    int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
-    int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
+    float newX = vector.x * cosAlpha + vector.y * sinAlpha;
+    float newY = -vector.x * sinAlpha + vector.y * cosAlpha;
     Vector result = { newX, newY };
     return result;
 }
@@ -315,6 +361,9 @@ LRESULT WindowProcA(
         else if (wParam == 'A') {
             Input.left = true;
         }
+        else if (wParam == VK_SHIFT) {
+            Input.shift = true;
+        }
     } break;
     case WM_KEYUP:
     {
@@ -329,6 +378,9 @@ LRESULT WindowProcA(
         }
         else if (wParam == 'A') {
             Input.left = false;
+        }
+        else if (wParam == VK_SHIFT) {
+            Input.shift = false;
         }
     } break;
     case WM_MOUSEMOVE:
@@ -587,14 +639,17 @@ int WinMain(
 
     EntityID field = AddEntity();
     images[field] = GetImage("curve.bmp");
-    transforms[field] = { {0, 0}, 0, float(WindowWidth), float(WindowHeight) };
+    transforms[field] = { {0, 0}, 0, float(images[field].width) * 5, float(images[field].height) * 5};
     
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
-    transforms[guy] = { 0, 0, PI / 4, 60, 60};
+    transforms[guy] = { 0, 0, 0 , float(images[guy].width) * 2.5f, float(images[guy].height) * 2.5f};
 
     EntityID fieldCam = AddEntity();
-    transforms[fieldCam] = { {0, 0}, PI / 4, float(WindowWidth) / 1.5f , float(WindowHeight) / 1.5f};
+    transforms[fieldCam] = { {0, 0}, 0, transforms[field].width , transforms[field].height};
+
+    EntityID guyCam = AddEntity();
+    transforms[guyCam] = { {0, 0}, 0, transforms[field].width / 3 , transforms[field].height / 3};
 
     char fps[10] = {};
     char maxFps[15] = {};
@@ -621,6 +676,7 @@ int WinMain(
         for (int i = 0; i < WindowWidth * WindowHeight; i++) {
 		    BitmapMemory[i] = 0;
         }
+        EntityID cam = guyCam;
 
         {
             double mouseDiff = double(Input.mouseX - WindowWidth / 2);
@@ -628,11 +684,37 @@ int WinMain(
             ClientToScreen(hWnd, &c);
             SetCursorPos(c.x, c.y);
             transforms[guy].angle -= mouseDiff * 0.001;
-            transforms[fieldCam].angle -= mouseDiff * 0.001;
+            Vector wasd[4] = {
+                0, -1,
+                -1, 0,
+                0, 1,
+                1, 0,
+            };
+            for (int i = 0; i < 4; i++) {
+                wasd[i] = RotateVector(wasd[i], transforms[guy].angle);
+            }
+            float speed = 8;
+            if (Input.up) {
+                transforms[guy].center += wasd[0] * speed;
+            }
+            if (Input.left) {
+                transforms[guy].center += wasd[1] * speed;
+            }
+            if (Input.down) {
+                transforms[guy].center += wasd[2] * speed;
+            }
+            if (Input.right) {
+                transforms[guy].center += wasd[3] * speed;
+            }
+            if (Input.shift) {
+                cam = fieldCam;
+            }
         }
+        transforms[guyCam].angle = transforms[guy].angle;
+        transforms[guyCam].center = transforms[guy].center ;
 
 		StringCchPrintf(maxFps, 15, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
-        RenderFromCamera(fieldCam);
+        RenderFromCamera(cam);
         while (true) {
             float elapsed = elapsedMs(previousFrameRenderedAtCounter, qpc());
             if (elapsed >= frameDurationMs) {
