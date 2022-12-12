@@ -112,6 +112,7 @@ static const double PI = double(3.141592653589793);
 static Image allImages[MAX_IMAGES];
 static UserInput Input;
 static Vector DefaultOrientation = { 0, 1 };
+static int QpcFrequency;
 
 
 Image GetImage(const char* bmpName) {
@@ -400,14 +401,9 @@ LARGE_INTEGER qpc() {
     return startingTime;
 }
 
-uint64_t msSinceQpc(LARGE_INTEGER start) {
-    LARGE_INTEGER frequency, endingTime, elapsed;
-    QueryPerformanceFrequency(&frequency); 
-	QueryPerformanceCounter(&endingTime);
-	elapsed.QuadPart = endingTime.QuadPart - start.QuadPart;
-	elapsed.QuadPart *= 1000;
-	elapsed.QuadPart /= frequency.QuadPart;
-    return elapsed.QuadPart;
+float elapsedMs(LARGE_INTEGER start, LARGE_INTEGER end) {
+    uint64_t elapsed = (end.QuadPart - start.QuadPart);
+    return float(elapsed) * 1000.0f / QpcFrequency;
 }
 
 
@@ -458,7 +454,7 @@ void RenderRectangleFast(VectorF center, float angle, float width, float height,
     for (int y = 0; y < WindowHeight; y++) {
 		__m128 distanceY = _mm_set_ps1(y - origin.y);
         for (int x = 0; x < WindowWidth; x+=4){
-            __m128 distanceX = _mm_sub_ps(_mm_set_ps(x, x+ 1, x + 2, x + 3), originX);
+            __m128 distanceX = _mm_sub_ps(_mm_set_ps(x, x + 1, x + 2, x + 3), originX);
             __m128 dotXAxis = _mm_add_ps(_mm_mul_ps(distanceX, xAxisX), _mm_mul_ps(distanceY, xAxisY));
             __m128 dotYAxis = _mm_add_ps(_mm_mul_ps(distanceX, yAxisX), _mm_mul_ps(distanceY, yAxisY));
             __m128 u = _mm_mul_ps(dotXAxis, xAxisSquareInv);
@@ -491,9 +487,6 @@ void RenderRectangleFast(VectorF center, float angle, float width, float height,
             _mm_store_si128((__m128i*)(BitmapMemory + pixelIndex), pixels);
         }
     }
-    DebugLog("rendered rectangle %dms\n", msSinceQpc(time));
-
-
 }
 
 
@@ -530,67 +523,17 @@ void RenderRectangle(Vector center, float angle, int width, int height, Image* t
 }
 
 
-void RenderToMemory(EntityID cam) {
+void RenderFromCamera(EntityID cam) {
     // BitmapMemory[screenIndex] = entityPixel;
     Transform camTransform = transforms[cam];
-	double cosCamAngle = cos(camTransform.angle);
-	double sinCamAngle = sin(camTransform.angle);
     for (EntityID entity = 0; entity < entitiesCount; entity++) {
         Transform entityTransform = transforms[entity];
         Image entityImage = images[entity];
         if (entityImage.width == 0 || entityImage.height == 0 || entityTransform.width == 0 || entityTransform.height == 0) {
             continue;
         }
-        int yMin = 0;
-        int yMax = WindowHeight;
-        int xMin = 0;
-        int xMax = WindowWidth;
-        for (int y = yMin; y < yMax; y++) {
-            for (int x = xMin; x < xMax; x++) {
-                // u, v - ?
-
-
-            }
-        }
-
-#if 0
-        double entityToCamAngle = camTransform.angle - entityTransform.angle;
-		double cosEntityToCamAngle = cos(entityToCamAngle);
-		double sinEntityToCamAngle = sin(entityToCamAngle);
-        int entityToCameraRotatedX = camTransform.centerX - entityTransform.centerX;
-        int entityToCameraRotatedY =  camTransform.centerY - entityTransform.centerY;
-		int entityToCamX = int(double(entityToCameraRotatedX) * cosCamAngle + double(entityToCameraRotatedY) * (-1) * sinCamAngle);
-		int entityToCamY = int(-double(entityToCameraRotatedX) * (-1) * sinCamAngle + double(entityToCameraRotatedY) * cosCamAngle);
-        LARGE_INTEGER time = qpc();
-        for (int windowIndex = 0; windowIndex < WindowWidth * WindowHeight; windowIndex++) {
-            int windowX = windowIndex % WindowWidth;
-            int windowY = windowIndex / WindowWidth;
-			int pixelX = ((windowX - WindowWidth / 2) * camTransform.width) /  WindowWidth;
-			int pixelY = ((windowY - WindowHeight / 2) * camTransform.height) / WindowHeight;
-
-			int entityToPixelX = entityToCamX + pixelX;
-			int entityToPixelY = entityToCamY + pixelY; 
-
-			int entityPixelX = int(double(entityToPixelX) * cosEntityToCamAngle + double(entityToPixelY) * (-1) * sinEntityToCamAngle);
-			int entityPixelY = int(-double(entityToPixelX) * (-1) * sinEntityToCamAngle + double(entityToPixelY) * cosEntityToCamAngle);
-
-			entityPixelX += entityTransform.width / 2;
-			entityPixelY += entityTransform.height / 2;
-			int imageX = entityPixelX * entityImage.width / entityTransform.width;
-			int imageY = entityPixelY * entityImage.height / entityTransform.height;
-			if (imageX >= entityImage.width || imageY >= entityImage.height || imageX < 0 || imageY < 0) {
-				continue;
-			}
-			int imageIndex = imageX + imageY * entityImage.width;
-			uint32_t pixel = entityImage.pixels[imageIndex];
-			uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
-			if (entityAlpha > 0) {
-				BitmapMemory[windowIndex] = pixel;
-			}
-        }
-        DebugLog("entity %d passed %dms\n", entity, msSinceQpc(time));
-#endif 
     }
+
 }
 
 
@@ -600,6 +543,10 @@ int WinMain(
     LPSTR     lpCmdLine,
     int       nShowCmd)
 {
+    LARGE_INTEGER frequency;
+    QueryPerformanceFrequency(&frequency); 
+    QpcFrequency = frequency.QuadPart;
+
     WIN32_FIND_DATA fileMetadata = {};
     HANDLE dirHandle = FindFirstFile("assets\\*", &fileMetadata);
     if (INVALID_HANDLE_VALUE == dirHandle) {
@@ -673,36 +620,6 @@ int WinMain(
     ShowCursor(0);
     int frame = 0;
 
-    /*
-    Cam cam = {};
-    
-    Entity* field = CreateEntity("curve.bmp");
-    field->width *= 10;
-    field->height *= 10;
-    field->visible = false;
-
-    Entity* character = CreateEntity("character.bmp");
-	character->x = 20;
-    character->y = 250;
-    character->width *= 2;
-    character->height *= 2;
-    character->visible = false;
-
-    Entity* testEntity = CreateEntity("test3.bmp");
-    testEntity->x = 200;
-    testEntity->y = 300;
-    testEntity->rotation = PI / 4;
-    testEntity->width *= 50;
-    testEntity->height *= 50;
-    testEntity->visible = false;
-
-    Entity* cursor = CreateEntity("cursor.bmp");
-    cursor->width *= 5;
-    cursor->height *= 5;
-    cursor->visible = false;
-    */
-
-
     EntityID field = AddEntity();
     images[field] = GetImage("curve.bmp");
     transforms[field] = { 0, 0, 0, images[field].width * 3, images[field].height * 3};
@@ -725,6 +642,9 @@ int WinMain(
 
 
     Image fieldImage = GetImage("highres.bmp");
+    LARGE_INTEGER previousFrameRenderedAtCounter = LARGE_INTEGER{};
+    float frameRate = 30;
+    float frameDurationMs = 1000.0f / frameRate;
     while (Running) {
         frame++;
         MSG message = {};
@@ -748,13 +668,16 @@ int WinMain(
             ClientToScreen(hWnd, &c);
             SetCursorPos(c.x, c.y);
             // transforms[guy].angle -= mouseDiff;
-
         }
         */
-    
-        // RenderToMemory(fieldCam);
-        RenderRectangleFast(VectorF{ float(WindowWidth) / 2, float(WindowHeight) / 2 }, 0, 1000, 600, &fieldImage);
-        //RenderRectangle({ WindowWidth / 2, WindowHeight / 2 }, frame * 0.01, 400, 400, &fieldImage);
+        
+        RenderRectangleFast(VectorF{ float(WindowWidth) / 2, float(WindowHeight) / 2 }, 0, 700, 801, & fieldImage);
+        while (true) {
+            float elapsed = elapsedMs(previousFrameRenderedAtCounter, qpc());
+            if (elapsed >= frameDurationMs) {
+                break;
+            }
+        }
         StretchDIBits(
             GetDC(hWnd),
             0, 0, WindowWidth, WindowHeight,
@@ -764,9 +687,10 @@ int WinMain(
             DIB_RGB_COLORS,
             SRCCOPY
         );
+        previousFrameRenderedAtCounter = qpc();
 
         
-        uint64_t passedMs = msSinceQpc(startMeasure);
+        uint64_t passedMs = elapsedMs(startMeasure, qpc());
         passedFrames += 1;
         if (passedMs > 1000) {
 		    StringCchPrintf(fps, 10, "fps %d ", int(passedFrames / (double(passedMs) / 1000)));
