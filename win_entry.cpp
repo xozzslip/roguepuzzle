@@ -457,7 +457,6 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
     }
 }
 
-
 void RenderFromCamera(EntityID cam) {
     // BitmapMemory[screenIndex] = entityPixel;
     Transform camTransform = transforms[cam];
@@ -592,10 +591,10 @@ int WinMain(
     
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
-    transforms[guy] = { 0, 0, PI / 4, 20, 20};
+    transforms[guy] = { 0, 0, PI / 4, 60, 60};
 
     EntityID fieldCam = AddEntity();
-    transforms[fieldCam] = { {0, 0}, PI / 4, float(WindowWidth) / 4 , float(WindowHeight) / 4};
+    transforms[fieldCam] = { {0, 0}, PI / 4, float(WindowWidth) / 1.5f , float(WindowHeight) / 1.5f};
 
     char fps[10] = {};
     char maxFps[15] = {};
@@ -608,7 +607,6 @@ int WinMain(
     float frameRate = 30;
     float frameDurationMs = 1000.0f / frameRate;
     while (Running) {
-
         LARGE_INTEGER frameCounter = qpc();
         frame++;
         MSG message = {};
@@ -624,15 +622,14 @@ int WinMain(
 		    BitmapMemory[i] = 0;
         }
 
-        /*
         {
             double mouseDiff = double(Input.mouseX - WindowWidth / 2);
             POINT c = { WindowWidth / 2, WindowHeight / 2 };
             ClientToScreen(hWnd, &c);
             SetCursorPos(c.x, c.y);
-            // transforms[guy].angle -= mouseDiff;
+            transforms[guy].angle -= mouseDiff * 0.001;
+            transforms[fieldCam].angle -= mouseDiff * 0.001;
         }
-        */        
 
 		StringCchPrintf(maxFps, 15, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         RenderFromCamera(fieldCam);
@@ -654,8 +651,6 @@ int WinMain(
         );
 
         previousFrameRenderedAtCounter = qpc();
-
-
         
         uint64_t passedMs = elapsedMs(startMeasure, qpc());
         passedFrames += 1;
@@ -664,7 +659,6 @@ int WinMain(
             passedFrames = 0;
             startMeasure = qpc();
         }
-
     
 		TextOutA(
           GetDC(hWnd),
@@ -673,12 +667,10 @@ int WinMain(
           fps,
 		  10
 		);
-        
-
 		TextOutA(
           GetDC(hWnd),
 		  0,
-		  13,
+		  15,
           maxFps,
 		  15
 		);
