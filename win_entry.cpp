@@ -9,14 +9,9 @@
 
 
 typedef struct {
-    int x;
-    int y;
-} Vector;
-
-typedef struct {
     float x;
     float y;
-} VectorF;
+} Vector;
 
 inline Vector
 operator-(Vector a, Vector b)
@@ -36,34 +31,6 @@ operator+(Vector a, Vector b)
   return result;
 }
 
-inline VectorF
-operator-(VectorF a, VectorF b)
-{
-  VectorF result;
-  result.x = a.x - b.x;
-  result.y = a.y - b.y;
-  return result;
-}
-
-inline VectorF
-operator+(VectorF a, VectorF b)
-{
-  VectorF result;
-  result.x = a.x + b.x;
-  result.y = a.y + b.y;
-  return result;
-}
-
-typedef struct {
-    int cornerX;
-    int cornerY;
-    int effectiveWidth;
-    int effectiveHeight;
-    double angleSin;
-    double angleCos;
-} RenderDetails;
-
-
 typedef struct {
     char name[MAX_PATH];
     int width;
@@ -73,11 +40,10 @@ typedef struct {
 
 
 typedef struct {
-    int centerX;
-    int centerY;
-    double angle;
-    int width;
-    int height;
+    Vector center;
+    float angle;
+    float width;
+    float height;
 } Transform;
 
 
@@ -104,11 +70,10 @@ static bool Running = true;
 static const int MAX_ENTITIES = 1000;
 static Transform transforms[MAX_ENTITIES];
 static Image images[MAX_ENTITIES];
-static RenderDetails renderCache[MAX_ENTITIES];
 static int entitiesCount;
 static const int MAX_IMAGES = 1000;
 static int imagesCount;
-static const double PI = double(3.141592653589793);
+static const float PI = double(3.141592653589793);
 static Image allImages[MAX_IMAGES];
 static UserInput Input;
 static Vector DefaultOrientation = { 0, 1 };
@@ -139,16 +104,6 @@ Vector RotateVector(Vector vector, float alpha) {
     int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
     int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
     Vector result = { newX, newY };
-    return result;
-}
-
-VectorF RotateVectorF(VectorF vector, float alpha) {
-    double cosAlpha = cos(alpha);
-    double sinAlpha = sin(alpha);
-    // signs are specific for our coordinate system
-    int newX = int(double(vector.x) * cosAlpha + double(vector.y) * sinAlpha);
-    int newY = int(-double(vector.x) * sinAlpha + double(vector.y) * cosAlpha);
-    VectorF result = { newX, newY };
     return result;
 }
 
@@ -407,11 +362,7 @@ float elapsedMs(LARGE_INTEGER start, LARGE_INTEGER end) {
 }
 
 
-inline int Dot(Vector a, Vector b) {
-    return a.x * b.x + a.y * b.y;
-}
-
-inline int DotF(VectorF a, VectorF b) {
+inline float Dot(Vector a, Vector b) {
     return a.x * b.x + a.y * b.y;
 }
 
@@ -426,27 +377,26 @@ static inline __m128i muly(const __m128i &a, const __m128i &b)
 #endif
 }
 
-void RenderRectangleFast(VectorF center, float angle, float width, float height, Image* texture) {
-    LARGE_INTEGER time = qpc();
-    VectorF corners[4] = {
+void RenderRectangle(Vector center, float angle, float width, float height, Image* texture) {
+    Vector corners[4] = {
         -width / 2, -height / 2,
          width / 2, -height / 2,
         -width / 2,  height / 2,
          width / 2,  height / 2,
     };
     for (int i = 0; i < 4; i++) {
-        corners[i] = RotateVectorF(corners[i], angle) + center;
+        corners[i] = RotateVector(corners[i], angle) + center;
     }
-    VectorF origin = corners[0];
-    VectorF xAxis = corners[1] - origin;
-    VectorF yAxis = corners[2] - origin;
+    Vector origin = corners[0];
+    Vector xAxis = corners[1] - origin;
+    Vector yAxis = corners[2] - origin;
     __m128 originX = _mm_set_ps1(origin.x);
     __m128 xAxisX = _mm_set_ps1(xAxis.x);
     __m128 xAxisY = _mm_set_ps1(xAxis.y);
     __m128 yAxisX = _mm_set_ps1(yAxis.x);
     __m128 yAxisY = _mm_set_ps1(yAxis.y);
-    __m128 xAxisSquareInv = _mm_set_ps1(1.0 / DotF(xAxis, xAxis));
-    __m128 yAxisSquareInv = _mm_set_ps1(1.0 / DotF(yAxis, yAxis));
+    __m128 xAxisSquareInv = _mm_set_ps1(1.0 / Dot(xAxis, xAxis));
+    __m128 yAxisSquareInv = _mm_set_ps1(1.0 / Dot(yAxis, yAxis));
     __m128 textureWidth = _mm_set_ps1(texture->width);
     __m128 textureHeight = _mm_set_ps1(texture->height);
     __m128i textureWidthI = _mm_set1_epi32(texture->width);
@@ -471,53 +421,38 @@ void RenderRectangleFast(VectorF center, float angle, float width, float height,
             int32_t insideD = ((int32_t*)&inside)[3];
             __m128i pixels = _mm_set1_epi32(0);
             if (insideA) {
-                ((int32_t*)&pixels)[3] = texture->pixels[((uint32_t*)&textureIndex)[0]];
+                uint32_t pixel = texture->pixels[((uint32_t*)&textureIndex)[0]];
+                uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
+                int pixelIndex = x + y * WindowWidth + 3;
+                if (entityAlpha > 0) {
+                    BitmapMemory[pixelIndex] = pixel;
+                }
             }
             if (insideB) {
-                ((int32_t*)&pixels)[2] = texture->pixels[((uint32_t*)&textureIndex)[1]];
+                uint32_t pixel = texture->pixels[((uint32_t*)&textureIndex)[1]];
+                uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
+                int pixelIndex = x + y * WindowWidth + 2;
+                if (entityAlpha > 0) {
+                    BitmapMemory[pixelIndex] = pixel;
+                }
             }
             if (insideC) {
-                ((int32_t*)&pixels)[1] = texture->pixels[((uint32_t*)&textureIndex)[2]];
+                uint32_t pixel = texture->pixels[((uint32_t*)&textureIndex)[2]];
+                uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
+                int pixelIndex = x + y * WindowWidth + 1;
+                if (entityAlpha > 0) {
+                    BitmapMemory[pixelIndex] = pixel;
+                }
             }
             if (insideD) {
-                ((int32_t*)&pixels)[0] = texture->pixels[((uint32_t*)&textureIndex)[3]];
+                uint32_t pixel = texture->pixels[((uint32_t*)&textureIndex)[3]];
+                uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
+                int pixelIndex = x + y * WindowWidth + 0;
+                if (entityAlpha > 0) {
+                    BitmapMemory[pixelIndex] = pixel;
+                }
             }
 
-            int pixelIndex = x + y * WindowWidth;
-            _mm_store_si128((__m128i*)(BitmapMemory + pixelIndex), pixels);
-        }
-    }
-}
-
-
-void RenderRectangle(Vector center, float angle, int width, int height, Image* texture) {
-    Vector corners[4] = {
-        -width / 2, -height / 2,
-         width / 2, -height / 2,
-        -width / 2,  height / 2,
-         width / 2,  height / 2,
-    };
-    for (int i = 0; i < 4; i++) {
-        corners[i] = RotateVector(corners[i], angle) + center;
-    }
-    Vector origin = corners[0];
-    Vector xAxis = corners[1] - origin;
-    Vector yAxis = corners[2] - origin;
-    float xAxisSquareInv = 1.0 / Dot(xAxis, xAxis);
-    float yAxisSquareInv = 1.0 / Dot(yAxis, yAxis);
-
-    for (int y = 0; y < WindowHeight; y++) {
-        for (int x = 0; x < WindowWidth; x++){
-            Vector d = Vector{ x, y } - origin;
-            float u = float(Dot(xAxis, d)) * xAxisSquareInv;
-            float v = float(Dot(yAxis, d)) * yAxisSquareInv;
-            if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
-                int pixelIndex = x + y * WindowWidth;
-                int textureX = int(u * float(texture->width));
-                int textureY = int(v * float(texture->height));
-                int textureIndex = textureX + textureY * texture->width;
-				BitmapMemory[pixelIndex] = texture->pixels[textureIndex];
-            }
         }
     }
 }
@@ -526,12 +461,43 @@ void RenderRectangle(Vector center, float angle, int width, int height, Image* t
 void RenderFromCamera(EntityID cam) {
     // BitmapMemory[screenIndex] = entityPixel;
     Transform camTransform = transforms[cam];
+    Vector camOrigin = {};
+    Vector camXAxis = {};
+    Vector camYAxis = {};
+    {
+        Vector corners[4] = {
+            -camTransform.width / 2, -camTransform.height / 2,
+             camTransform.width / 2, -camTransform.height / 2,
+            -camTransform.width / 2,  camTransform.height / 2,
+             camTransform.width / 2,  camTransform.height / 2,
+        };
+        for (int i = 0; i < 4; i++) {
+            corners[i] = RotateVector(corners[i], camTransform.angle) + camTransform.center;
+        }
+        camOrigin = corners[0];
+        camXAxis = corners[1] - camOrigin;
+        camYAxis = corners[2] - camOrigin;
+    }
+    float camXAxisSquareInv = 1.0 / Dot(camXAxis, camXAxis);
+    float camYAxisSquareInv = 1.0 / Dot(camYAxis, camYAxis);
+    float camXScale = WindowWidth / camTransform.width;
+    float camYScale = WindowHeight / camTransform.height;
+
     for (EntityID entity = 0; entity < entitiesCount; entity++) {
         Transform entityTransform = transforms[entity];
         Image entityImage = images[entity];
         if (entityImage.width == 0 || entityImage.height == 0 || entityTransform.width == 0 || entityTransform.height == 0) {
             continue;
         }
+        Vector d = entityTransform.center - camOrigin;
+        float u = Dot(d, camXAxis) * camXAxisSquareInv;
+        float v = Dot(d, camYAxis) * camYAxisSquareInv;
+        float camX = u * WindowWidth;
+        float camY = v * WindowHeight;
+        float angle = entityTransform.angle - camTransform.angle;
+        float width = entityTransform.width * camXScale;
+        float height = entityTransform.height * camYScale;
+        RenderRectangle({ camX, camY }, angle, width, height, &entityImage);
     }
 
 }
@@ -622,30 +588,28 @@ int WinMain(
 
     EntityID field = AddEntity();
     images[field] = GetImage("curve.bmp");
-    transforms[field] = { 0, 0, 0, images[field].width * 3, images[field].height * 3};
-
+    transforms[field] = { {0, 0}, 0, float(WindowWidth), float(WindowHeight) };
+    
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
-    transforms[guy] = { 10, 10, 0, 20, 20};
-
-
-    EntityID guyCam = AddEntity();
-    transforms[guyCam] = { 15, 15, PI / 4 , 80, 80 };
+    transforms[guy] = { 0, 0, PI / 4, 20, 20};
 
     EntityID fieldCam = AddEntity();
-    transforms[fieldCam] = { 0, 0, PI/ 4, WindowWidth / 5, WindowHeight / 5};
+    transforms[fieldCam] = { {0, 0}, PI / 4, float(WindowWidth) / 4 , float(WindowHeight) / 4};
 
     char fps[10] = {};
+    char maxFps[15] = {};
 
     LARGE_INTEGER startMeasure = qpc();
     int passedFrames = 0;
-
 
     Image fieldImage = GetImage("highres.bmp");
     LARGE_INTEGER previousFrameRenderedAtCounter = LARGE_INTEGER{};
     float frameRate = 30;
     float frameDurationMs = 1000.0f / frameRate;
     while (Running) {
+
+        LARGE_INTEGER frameCounter = qpc();
         frame++;
         MSG message = {};
         while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
@@ -660,7 +624,6 @@ int WinMain(
 		    BitmapMemory[i] = 0;
         }
 
-
         /*
         {
             double mouseDiff = double(Input.mouseX - WindowWidth / 2);
@@ -669,15 +632,17 @@ int WinMain(
             SetCursorPos(c.x, c.y);
             // transforms[guy].angle -= mouseDiff;
         }
-        */
-        
-        RenderRectangleFast(VectorF{ float(WindowWidth) / 2, float(WindowHeight) / 2 }, 0, 700, 801, & fieldImage);
+        */        
+
+		StringCchPrintf(maxFps, 15, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
+        RenderFromCamera(fieldCam);
         while (true) {
             float elapsed = elapsedMs(previousFrameRenderedAtCounter, qpc());
             if (elapsed >= frameDurationMs) {
                 break;
             }
         }
+
         StretchDIBits(
             GetDC(hWnd),
             0, 0, WindowWidth, WindowHeight,
@@ -687,7 +652,9 @@ int WinMain(
             DIB_RGB_COLORS,
             SRCCOPY
         );
+
         previousFrameRenderedAtCounter = qpc();
+
 
         
         uint64_t passedMs = elapsedMs(startMeasure, qpc());
@@ -697,6 +664,7 @@ int WinMain(
             passedFrames = 0;
             startMeasure = qpc();
         }
+
     
 		TextOutA(
           GetDC(hWnd),
@@ -706,6 +674,14 @@ int WinMain(
 		  10
 		);
         
+
+		TextOutA(
+          GetDC(hWnd),
+		  0,
+		  13,
+          maxFps,
+		  15
+		);
     } 
     return 0;
 }
