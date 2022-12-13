@@ -509,6 +509,31 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
     }
 }
 
+void RenderGrid(EntityID cam) {
+    Transform t = transforms[cam];
+    Vector worldCenter = { -t.center.x, -t.center.y };
+    Vector scale = { WindowWidth / t.width, WindowHeight / t.height };
+    float offsetX = scale.x * worldCenter.x;
+    float offsetY = scale.y * worldCenter.y;
+    for (int x = 0; x < WindowWidth; x++) {
+        for (int y = 0; y < WindowHeight; y++) {
+            int pixelIndex = x + y * WindowWidth;
+            if (x == WindowWidth / 2) {
+                BitmapMemory[pixelIndex] = 2390942;
+            }
+            if (y == WindowHeight / 2) {
+                BitmapMemory[pixelIndex] = 2390942;
+            }
+            if (x == int(WindowWidth / 2 + offsetX)) {
+                BitmapMemory[pixelIndex] = 232390942;
+            }
+            if (y == int(WindowHeight / 2 + offsetY)) {
+                BitmapMemory[pixelIndex] = 232390942;
+            }
+        }
+    }
+}
+
 void RenderFromCamera(EntityID cam) {
     // BitmapMemory[screenIndex] = entityPixel;
     Transform camTransform = transforms[cam];
@@ -639,17 +664,17 @@ int WinMain(
 
     EntityID field = AddEntity();
     images[field] = GetImage("curve.bmp");
-    transforms[field] = { {0, 0}, 0, float(images[field].width) * 5, float(images[field].height) * 5};
+    transforms[field] = { {0, 0}, 0, 3000, 2000};
     
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
-    transforms[guy] = { 0, 0, 0 , float(images[guy].width) * 2.5f, float(images[guy].height) * 2.5f};
+    transforms[guy] = { {100, 50}, PI / 4, 20, 20 };
 
     EntityID fieldCam = AddEntity();
-    transforms[fieldCam] = { {0, 0}, 0, transforms[field].width , transforms[field].height};
+    transforms[fieldCam] = { {0, 10}, 0, transforms[field].width , transforms[field].height};
 
     EntityID guyCam = AddEntity();
-    transforms[guyCam] = { {0, 0}, 0, transforms[field].width / 3 , transforms[field].height / 3};
+    transforms[guyCam] = { {150, 100}, PI / 4, float(WindowWidth), float(WindowHeight) };
 
     char fps[10] = {};
     char maxFps[15] = {};
@@ -679,10 +704,13 @@ int WinMain(
         EntityID cam = guyCam;
 
         {
-            double mouseDiff = double(Input.mouseX - WindowWidth / 2);
-            POINT c = { WindowWidth / 2, WindowHeight / 2 };
-            ClientToScreen(hWnd, &c);
-            SetCursorPos(c.x, c.y);
+            double mouseDiff = 0;
+			if (hWnd == GetActiveWindow()) {
+				mouseDiff = double(Input.mouseX - WindowWidth / 2);
+				POINT c = { WindowWidth / 2, WindowHeight / 2 };
+				ClientToScreen(hWnd, &c);
+				SetCursorPos(c.x, c.y);
+			}
             transforms[guy].angle -= mouseDiff * 0.001;
             Vector wasd[4] = {
                 0, -1,
@@ -693,7 +721,7 @@ int WinMain(
             for (int i = 0; i < 4; i++) {
                 wasd[i] = RotateVector(wasd[i], transforms[guy].angle);
             }
-            float speed = 8;
+            float speed = 88;
             if (Input.up) {
                 transforms[guy].center += wasd[0] * speed;
             }
@@ -715,12 +743,15 @@ int WinMain(
 
 		StringCchPrintf(maxFps, 15, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         RenderFromCamera(cam);
+        // RenderRectangle({0, 0}, PI / 4, )
         while (true) {
             float elapsed = elapsedMs(previousFrameRenderedAtCounter, qpc());
             if (elapsed >= frameDurationMs) {
                 break;
             }
         }
+
+        RenderGrid(cam);
 
         StretchDIBits(
             GetDC(hWnd),
