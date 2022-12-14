@@ -597,9 +597,30 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
         -width / 2,  height / 2,
          width / 2,  height / 2,
     };
+    float minX = MAXINT;
+    float maxX = -MAXINT;
+    float minY = MAXINT;
+    float maxY = -MAXINT;
     for (int i = 0; i < 4; i++) {
-        corners[i] = RotateVector(corners[i], angle) + center;
+        Vector corner = RotateVector(corners[i], angle) + center;
+        corners[i] = corner;
+        if (corner.x < minX) {
+            minX = corner.x;
+        }
+        if (corner.x > maxX) {
+            maxX = corner.x;
+        }
+        if (corner.y < minY) {
+            minY = corner.y;
+        }
+        if (corner.y > maxY) {
+            maxY = corner.y;
+        }
     }
+    minX = max(0, minX);
+    minY = max(0, minY);
+    maxX = min(WindowWidth, maxX);
+    maxY = min(WindowHeight, maxY);
     Vector origin = corners[0];
     Vector xAxis = corners[1] - origin;
     Vector yAxis = corners[2] - origin;
@@ -614,9 +635,9 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
     __m128 textureHeight = _mm_set_ps1(texture->height);
     __m128i textureWidthI = _mm_set1_epi32(texture->width);
     __m128i textureHeightI = _mm_set1_epi32(texture->height);
-    for (int y = 0; y < WindowHeight; y++) {
+    for (int y = minY; y < maxY; y++) {
 		__m128 distanceY = _mm_set_ps1(y - origin.y);
-        for (int x = 0; x < WindowWidth; x+=4){
+        for (int x = minX; x < maxX; x+=4){
             __m128 distanceX = _mm_sub_ps(_mm_set_ps(x, x + 1, x + 2, x + 3), originX);
             __m128 dotXAxis = _mm_add_ps(_mm_mul_ps(distanceX, xAxisX), _mm_mul_ps(distanceY, xAxisY));
             __m128 dotYAxis = _mm_add_ps(_mm_mul_ps(distanceX, yAxisX), _mm_mul_ps(distanceY, yAxisY));
