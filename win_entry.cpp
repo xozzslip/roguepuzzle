@@ -9,6 +9,25 @@
 
 
 typedef struct {
+    uint8_t* bytes;
+    int size;
+} Buffer;
+
+
+typedef struct {
+    Buffer buffer;
+    char name[MAX_PATH];
+    int nameSize;
+} Asset;
+
+typedef struct {
+    char name[MAX_PATH];
+    int width;
+    int height;
+    int32_t* values;
+} Csv;
+
+typedef struct {
     float x;
     float y;
 } Vector;
@@ -108,6 +127,7 @@ bool StringEqualTo(char* s, const char* sample);
 void DebugLog(const char* format, ...);
 void FatalError(const char* format, ...);
 
+
 static uint32_t* BitmapMemory;
 static BITMAPINFO BitmapInfo;
 static int WindowHeight;
@@ -117,14 +137,23 @@ static const int MAX_ENTITIES = 1000;
 static Transform transforms[MAX_ENTITIES];
 static Image images[MAX_ENTITIES];
 static int entitiesCount;
-static const int MAX_IMAGES = 1000;
 static int imagesCount;
+static int assetsCount;
+static int csvCount;
 static const float PI = double(3.141592653589793);
-static Image allImages[MAX_IMAGES];
 static UserInput Input;
 static Vector DefaultOrientation = { 0, 1 };
 static int QpcFrequency;
+static Image allImages[MAX_ENTITIES];
+static Asset allAssets[MAX_ENTITIES];
+static Csv allCsvs[MAX_ENTITIES];
 
+
+void Assert(bool expression,const char* error) {
+    if (!expression) {
+        FatalError(error);
+    }
+}
 
 Image GetImage(const char* bmpName) {
     bool found = false;
@@ -137,11 +166,27 @@ Image GetImage(const char* bmpName) {
         }
     }
     if (!found) {
-        FatalError("failed to create entity %s", bmpName);
+        FatalError("failed get image by filename %s\n", bmpName);
     }
     return *image;
 }
 
+
+Asset GetAsset(const char* filename) {
+    bool found = false;
+    Asset* asset = NULL;
+    for (int i = 0; i < assetsCount; i++) {
+        asset = &allAssets[i];
+        if (StringEqualTo(asset->name, filename)) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        FatalError("failed get asset by filename %s\n", filename);
+    }
+    return *asset;
+}
 
 Vector RotateVector(Vector vector, float alpha) {
     double cosAlpha = cos(alpha);
@@ -223,6 +268,76 @@ void FatalError(const char* format, ...) {
     va_end(argptr);
     DebugLog("%s: %s", s, lpMsgBuf);
     ExitProcess(1);
+}
+
+bool isCharNumeric(char x) {
+    if (x == '0' || x == '1' || x == '2' || x == '3' || x == '4' || x == '5'
+        || x == '6' || x == '7' || x == '8' || x == '9') {
+        return true;
+    }
+    return false;
+}
+
+void UnpackCsvBytes(uint8_t* bytes, int bytesCount, Csv* csv) {
+    if (bytesCount == 0) {
+        FatalError("csv must be not empty\n");
+    }
+    int valuesCount = 1;
+    for (int i = 0; i < bytesCount; i++) {
+        if (bytes[i] == ',' || bytes[i] == '\n') {
+            valuesCount++;
+        }
+    }
+    int32_t *values = (int32_t*)VirtualAlloc(0, valuesCount * 4, MEM_COMMIT, PAGE_READWRITE);
+    int32_t value = 0;
+    int width = 0;
+    int height = 0;
+    valuesCount = 0;
+
+    uint8_t* row = bytes;
+    int bytesRead = 0;
+    while (bytesRead < bytesCount) {
+        int valuesCountInRow = 0;
+        while (*row != '\r') {
+            int32_t value = 0;
+            bool negative = false;
+            if (*row == '-') {
+                negative = true;
+                row++;
+                bytesRead += 1;
+            }
+            while (isCharNumeric(*row)) {
+                value *= 10;
+                value += *row - '0';
+                row++;
+                bytesRead += 1;
+            }
+            if (negative) {
+                value = -value;
+            }
+            values[valuesCount] = value;
+            valuesCountInRow++;
+            valuesCount++;
+            row++;
+            bytesRead += 1;
+        }
+        if (width == 0 && valuesCountInRow != 0) {
+            width = valuesCountInRow;
+        }
+        if (valuesCountInRow != 0 && valuesCountInRow != width) {
+            FatalError("only csv with constant width are supported\n");
+        }
+        if (valuesCountInRow != 0) {
+            height++;
+        }
+        row++;
+        row++; // \r\n
+        bytesRead += 2;
+    }
+    Assert(valuesCount % width == 0, "amount of csv values must be devidible by width\n");
+    Assert(width > 0, "csv width must be non zero\n");
+    Assert(height > 0, "csv height must be non zero\n");
+    Assert(valuesCount > 0, "csv values count must be non zero\n");
 }
 
 
@@ -509,12 +624,7 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
     }
 }
 
-void RenderGrid(EntityID cam) {
-    Transform t = transforms[cam];
-    Vector worldCenter = { -t.center.x, -t.center.y };
-    Vector scale = { WindowWidth / t.width, WindowHeight / t.height };
-    float offsetX = scale.x * worldCenter.x;
-    float offsetY = scale.y * worldCenter.y;
+void RenderGrid() {
     for (int x = 0; x < WindowWidth; x++) {
         for (int y = 0; y < WindowHeight; y++) {
             int pixelIndex = x + y * WindowWidth;
@@ -523,12 +633,6 @@ void RenderGrid(EntityID cam) {
             }
             if (y == WindowHeight / 2) {
                 BitmapMemory[pixelIndex] = 2390942;
-            }
-            if (x == int(WindowWidth / 2 + offsetX)) {
-                BitmapMemory[pixelIndex] = 232390942;
-            }
-            if (y == int(WindowHeight / 2 + offsetY)) {
-                BitmapMemory[pixelIndex] = 232390942;
             }
         }
     }
@@ -578,6 +682,73 @@ void RenderFromCamera(EntityID cam) {
 
 }
 
+Buffer ReadWholeFile(char *filePath) {
+    LARGE_INTEGER fileSize;
+	HANDLE fileHandle = CreateFile(filePath,               // file to open
+		GENERIC_READ,          // open for reading
+		FILE_SHARE_READ,       // share for reading
+		NULL,                  // default security
+		OPEN_EXISTING,         // existing file only
+		FILE_ATTRIBUTE_NORMAL, // normal file
+		NULL);                 // no attr. template
+	if (fileHandle == 0 || fileHandle == INVALID_HANDLE_VALUE) {
+		FatalError("failed to open asset file\n");
+	}
+    if (GetFileSizeEx(fileHandle, &fileSize) == 0) {
+        FatalError("failed to get file size\n");
+    }
+    if (fileSize.QuadPart == 0) {
+        FatalError("file size must be non 0\n");
+    }
+	DWORD readBytes;
+	uint8_t* assetContent = (uint8_t *) VirtualAlloc(0, fileSize.QuadPart, MEM_COMMIT, PAGE_READWRITE);
+	if (ReadFile(fileHandle, assetContent, fileSize.QuadPart, &readBytes, NULL) <= 0) {
+		FatalError("failed to read asset content to memory\n");
+	}
+	if (uint64_t(readBytes) != uint64_t(fileSize.QuadPart)) {
+		FatalError("failed to fully read asset content\n");
+	}
+    return { assetContent, int(fileSize.QuadPart) };
+}
+
+int GetStringLength(char* s) {
+    int l = 0;
+    for (int i = 0; i < MAX_PATH; i++) {
+        if (s[i] != '\0') {
+            l++;
+        }
+        else {
+            break;
+        }
+    }
+    return l;
+}
+
+bool IsStringEndsWith(char* s, char* ending) {
+    int sLen = GetStringLength(s);
+    int endingLen = GetStringLength(ending);
+    if (endingLen > sLen) {
+        return false;
+    }
+    for (int i = 0; i < endingLen; i++) {
+        if (ending[endingLen - i - 1] != s[sLen - 1 - i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+
+
+
+void InitEntitesFromTileMap(const char *tileSetFileName, int tileSize, const char *mapCsvFileName) {
+    Asset csv = GetAsset(mapCsvFileName);
+    
+
+
+
+}
+
 
 int WinMain(
     HINSTANCE hInstance,
@@ -594,50 +765,37 @@ int WinMain(
     if (INVALID_HANDLE_VALUE == dirHandle) {
         FatalError("failed to open assets directory\n");
     }
+    int assetCount = 0;
     do {
         char filePath[MAX_PATH]; 
         if (StringCchPrintfA(filePath, MAX_PATH, "assets\\%s", fileMetadata.cFileName) < 0) {
             FatalError("large assets are not supported\n");
         }   
         DebugLog("reading file with name=\"%s\" path=\"%s\"\n", fileMetadata.cFileName, (char *)filePath);
-        if (imagesCount == MAX_IMAGES) {
+        if (imagesCount == MAX_ENTITIES) {
             FatalError("maximum amount of assets exceeded\n");
         }
         if (fileMetadata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             continue;
         }
-        if ((fileMetadata.nFileSizeHigh) != 0) {
-            FatalError("large assets are not supported\n");
-        }
-        int fileSize = fileMetadata.nFileSizeLow;
-        if (fileSize == 0) {
-            FatalError("assets with size=0 bytes are not supported\n");
-        }
-        HANDLE fileHandle = CreateFile(filePath,               // file to open
-            GENERIC_READ,          // open for reading
-            FILE_SHARE_READ,       // share for reading
-            NULL,                  // default security
-            OPEN_EXISTING,         // existing file only
-            FILE_ATTRIBUTE_NORMAL, // normal file
-            NULL);                 // no attr. template
-        if (fileHandle == 0 || fileHandle == INVALID_HANDLE_VALUE) {
-            FatalError("failed to open asset file\n");
-        }
-        DWORD readBytes;
-        uint8_t* assetContent = (uint8_t *) VirtualAlloc(0, fileSize, MEM_COMMIT, PAGE_READWRITE);
-        if (ReadFile(fileHandle, assetContent, fileSize, &readBytes, NULL) <= 0) {
-            FatalError("failed to read asset content to memory\n");
-        }
-        if (int(readBytes) != fileSize) {
-            FatalError("failed to fully read asset content\n");
-        }
-        Image *image = &allImages[imagesCount];
+        Buffer buf = ReadWholeFile(filePath);
         char* fileName = fileMetadata.cFileName;
-        UnpackBitmapBytes(assetContent, fileSize, image);
-        StringCchCopy(image->name, MAX_PATH, fileName);
-        imagesCount += 1;
-        VirtualFree(assetContent, 0, MEM_RELEASE);
-
+        if (IsStringEndsWith(fileName, (char*) ".bmp")) {
+            Image *image = &allImages[imagesCount];
+			UnpackBitmapBytes(buf.bytes, buf.size, image);
+			StringCchCopy(image->name, MAX_PATH, fileName);
+			imagesCount += 1;
+        }
+        else if (IsStringEndsWith(fileName, (char*)".csv")) {
+            Csv *csv= &allCsvs[csvCount];
+			UnpackCsvBytes(buf.bytes, buf.size, csv);
+			StringCchCopy(csv->name, MAX_PATH, fileName);
+			csvCount += 1;
+        }
+        Asset* asset = &allAssets[assetsCount];
+        asset->buffer = buf;
+	    StringCchCopy(asset->name, MAX_PATH, fileName);
+        assetsCount++;
     } while (FindNextFile(dirHandle, &fileMetadata) != 0);
     
     WNDCLASS windowClass = {};
@@ -668,7 +826,7 @@ int WinMain(
     
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
-    transforms[guy] = { {100, 50}, PI / 4, 20, 20 };
+    transforms[guy] = { {100, 50}, PI / 4, 80, 80 };
 
     EntityID fieldCam = AddEntity();
     transforms[fieldCam] = { {0, 10}, 0, transforms[field].width , transforms[field].height};
@@ -721,7 +879,7 @@ int WinMain(
             for (int i = 0; i < 4; i++) {
                 wasd[i] = RotateVector(wasd[i], transforms[guy].angle);
             }
-            float speed = 88;
+            float speed = 8;
             if (Input.up) {
                 transforms[guy].center += wasd[0] * speed;
             }
@@ -734,12 +892,12 @@ int WinMain(
             if (Input.right) {
                 transforms[guy].center += wasd[3] * speed;
             }
+            transforms[guyCam].center = transforms[guy].center + wasd[0] * 250;
             if (Input.shift) {
                 cam = fieldCam;
             }
         }
         transforms[guyCam].angle = transforms[guy].angle;
-        transforms[guyCam].center = transforms[guy].center ;
 
 		StringCchPrintf(maxFps, 15, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         RenderFromCamera(cam);
@@ -751,7 +909,7 @@ int WinMain(
             }
         }
 
-        RenderGrid(cam);
+        // RenderGrid();
 
         StretchDIBits(
             GetDC(hWnd),
