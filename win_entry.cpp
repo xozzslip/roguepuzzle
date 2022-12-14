@@ -617,10 +617,10 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
             maxY = corner.y;
         }
     }
-    minX = max(0, minX);
-    minY = max(0, minY);
-    maxX = min(WindowWidth, maxX);
-    maxY = min(WindowHeight, maxY);
+    minX = max(0, minX - 4);
+    minY = max(0, minY - 4);
+    maxX = min(WindowWidth, maxX + 4);
+    maxY = min(WindowHeight, maxY + 4);
     Vector origin = corners[0];
     Vector xAxis = corners[1] - origin;
     Vector yAxis = corners[2] - origin;
@@ -852,7 +852,7 @@ void InitTileMap(
 
 			EntityID entity = AddEntity();
 			images[entity] = GetTile(tilemapName, tileIndex);
-			transforms[entity] = { {x, y}, 0, tileSize * scaleX, tileSize * scaleY };
+			transforms[entity] = { {x - width / 2, y - height/ 2}, 0, tileSize * scaleX, tileSize * scaleY };
         }
     }
 
@@ -956,8 +956,8 @@ int WinMain(
     int frame = 0;
 
     EntityID field = AddEntity();
-    images[field] = GetTile("gameboy.16tileset.bmp", 5);
-    transforms[field] = { {0, 0}, 0, float(WindowWidth), float(WindowHeight)};
+    images[field] = GetTile("gameboy.16tileset.bmp", 7);
+    transforms[field] = { {0, 0}, 0, float(WindowHeight) * 2, float(WindowHeight) * 2};
     
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
@@ -968,7 +968,7 @@ int WinMain(
 
     EntityID guyCam = AddEntity();
     transforms[guyCam] = { {0, 0}, PI / 4, float(WindowWidth), float(WindowHeight) };
-    InitTileMap("gameboy.16tileset.bmp", "lvl1.csv", float(WindowWidth), float(WindowHeight));
+    InitTileMap("gameboy.16tileset.bmp", "lvl1.csv", float(WindowHeight) * 2, float(WindowHeight) * 2);
 
     char fps[10] = {};
     char maxFps[15] = {};
@@ -978,7 +978,7 @@ int WinMain(
 
     Image fieldImage = GetImage("highres.bmp");
     LARGE_INTEGER previousFrameRenderedAtCounter = LARGE_INTEGER{};
-    float frameRate = 30;
+    float frameRate = 60;
     float frameDurationMs = 1000.0f / frameRate;
     while (Running) {
         LARGE_INTEGER frameCounter = qpc();
