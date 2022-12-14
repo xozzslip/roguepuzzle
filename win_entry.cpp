@@ -947,7 +947,7 @@ int WinMain(
 
     EntityID guyCam = AddEntity();
     transforms[guyCam] = { {0, 0}, PI / 4, float(WindowWidth), float(WindowHeight) };
-    // InitTileMap("gameboy.16tileset.bmp", "lvl1.csv", float(WindowWidth), float(WindowHeight));
+    InitTileMap("gameboy.16tileset.bmp", "lvl1.csv", float(WindowWidth), float(WindowHeight));
 
     char fps[10] = {};
     char maxFps[15] = {};
