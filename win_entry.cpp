@@ -622,11 +622,19 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
             __m128 dotYAxis = _mm_add_ps(_mm_mul_ps(distanceX, yAxisX), _mm_mul_ps(distanceY, yAxisY));
             __m128 u = _mm_mul_ps(dotXAxis, xAxisSquareInv);
             __m128 v = _mm_mul_ps(dotYAxis, yAxisSquareInv);
-            __m128i tx = _mm_cvtps_epi32(_mm_mul_ps(u, textureWidth));
-            __m128i ty = _mm_cvtps_epi32(_mm_mul_ps(v, textureHeight));
-            __m128i textureIndex = _mm_add_epi32(tx, muly(ty, textureWidthI));
-            __m128i txInside = _mm_and_si128(_mm_cmpgt_epi32(tx, _mm_set1_epi32(-1)), _mm_cmplt_epi32(tx, textureWidthI));
-            __m128i tyInside = _mm_and_si128(_mm_cmpgt_epi32(ty, _mm_set1_epi32(-1)), _mm_cmplt_epi32(ty, textureHeightI));
+            __m128 tx = _mm_mul_ps(u, textureWidth);
+            __m128 ty = _mm_mul_ps(v, textureHeight);
+            __m128i txi = _mm_cvttps_epi32(tx);
+            __m128i tyi = _mm_cvttps_epi32(ty);
+            __m128i textureIndex = _mm_add_epi32(txi, muly(tyi, textureWidthI));
+            __m128i txInside = _mm_and_si128(
+                _mm_cmpgt_epi32(txi, _mm_set1_epi32(-1)), 
+                _mm_cmplt_epi32(txi, textureWidthI)
+            );
+            __m128i tyInside = _mm_and_si128(
+                _mm_cmpgt_epi32(tyi, _mm_set1_epi32(-1)),
+                _mm_cmplt_epi32(tyi, textureHeightI)
+            );
             __m128i inside = _mm_and_si128(txInside, tyInside);
             int32_t insideA = ((int32_t*)&inside)[0];
             int32_t insideB = ((int32_t*)&inside)[1];
@@ -904,19 +912,18 @@ int WinMain(
     int frame = 0;
 
     EntityID field = AddEntity();
-    images[field] = GetImage("curve.bmp");
-    transforms[field] = { {0, 0}, 0, 3000, 2000};
+    images[field] = GetTile("gameboy.16tileset.bmp", 5);
+    transforms[field] = { {0, 0}, 0, float(WindowWidth), float(WindowHeight)};
     
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
-    images[guy] = GetTile("gameboy.16tileset.bmp", 5);
-    transforms[guy] = { {100, 50}, PI / 4, 80, 80 };
+    transforms[guy] = { {0, 0}, PI / 4, 80, 80 };
 
     EntityID fieldCam = AddEntity();
-    transforms[fieldCam] = { {0, 10}, 0, transforms[field].width , transforms[field].height};
+    transforms[fieldCam] = { {0, 0}, 0, float(WindowWidth), float(WindowHeight)};
 
     EntityID guyCam = AddEntity();
-    transforms[guyCam] = { {150, 100}, PI / 4, float(WindowWidth), float(WindowHeight) };
+    transforms[guyCam] = { {0, 0}, PI / 4, float(WindowWidth), float(WindowHeight) };
 
     char fps[10] = {};
     char maxFps[15] = {};
@@ -985,7 +992,10 @@ int WinMain(
 
 		StringCchPrintf(maxFps, 15, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         RenderFromCamera(cam);
-        // RenderRectangle({0, 0}, PI / 4, )
+        /*
+        Image fieldImage = GetImage("test2.bmp");
+        RenderRectangle({ float(WindowWidth) / 2, float(WindowHeight) / 2}, 0, float(WindowWidth), float(WindowHeight), &fieldImage);
+        */
         while (true) {
             float elapsed = elapsedMs(previousFrameRenderedAtCounter, qpc());
             if (elapsed >= frameDurationMs) {
