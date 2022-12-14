@@ -102,6 +102,13 @@ typedef struct {
     uint32_t* pixels;
 } Image;
 
+typedef struct {
+    char name[MAX_PATH];
+    int width;
+    int height;
+    uint32_t* pixels;
+    int index;
+} Tile;
 
 typedef struct {
     Vector center;
@@ -139,6 +146,7 @@ static Image images[MAX_ENTITIES];
 static int entitiesCount;
 static int imagesCount;
 static int assetsCount;
+static int tilesCount;
 static int csvCount;
 static const float PI = double(3.141592653589793);
 static UserInput Input;
@@ -147,12 +155,35 @@ static int QpcFrequency;
 static Image allImages[MAX_ENTITIES];
 static Asset allAssets[MAX_ENTITIES];
 static Csv allCsvs[MAX_ENTITIES];
+static Tile allTiles[MAX_ENTITIES];
 
 
 void Assert(bool expression,const char* error) {
     if (!expression) {
         FatalError(error);
     }
+}
+
+
+Image GetTile(const char* bmpName, int tileIndex) {
+    bool found = false;
+    Tile* tile = NULL;
+    for (int i = 0; i < tilesCount; i++) {
+        tile = &allTiles[i];
+        if (StringEqualTo(tile->name, bmpName) && tileIndex == tile->index) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        FatalError("failed get tile by filename and index %s %d\n", bmpName, tileIndex);
+    }
+    Image img = {0};
+    img.height = tile->height;
+    img.width = tile->width;
+    img.pixels = tile->pixels;
+    StringCchCopy(img.name, MAX_PATH, tile->name);
+    return img;
 }
 
 Image GetImage(const char* bmpName) {
@@ -171,6 +202,22 @@ Image GetImage(const char* bmpName) {
     return *image;
 }
 
+
+Csv GetCsv(const char* filename) {
+    bool found = false;
+    Csv* csv = NULL;
+    for (int i = 0; i < csvCount; i++) {
+        csv = &allCsvs[i];
+        if (StringEqualTo(csv->name, filename)) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        FatalError("failed get csv by filename %s\n", filename);
+    }
+    return *csv;
+}
 
 Asset GetAsset(const char* filename) {
     bool found = false;
@@ -296,6 +343,7 @@ void UnpackCsvBytes(uint8_t* bytes, int bytesCount, Csv* csv) {
 
     uint8_t* next = bytes;
     // parses CSV with /r/n as new line
+    // TODO: write general purpose CSV parser
     while (next - bytes < bytesCount) {
         int valuesCountInRow = 0;
         while (*next != '\n') {
@@ -737,14 +785,25 @@ bool IsStringEndsWith(char* s, char* ending) {
 }
 
 
+int ParseTilesetResolution(char* fileName) {
+    char* s = fileName;
+    while (*s != '.') {
+        s++;
+    }
+    s++;
+    int value = 0;
+    while (isCharNumeric(*s)) {
+        value *= 10;
+        value += *s - '0';
+        s++;
+    }
+    Assert(value > 0, "tileset must contain resolution in pixels\n");
+    return value;
+}
 
 
-void InitEntitesFromTileMap(const char *tileSetFileName, int tileSize, const char *mapCsvFileName) {
-    Asset csv = GetAsset(mapCsvFileName);
-    
-
-
-
+void InitEntitesFromTileMap(const char *tilesetName, const char * csvName, int size) {
+    Csv csv = GetCsv(csvName);
 }
 
 
@@ -783,6 +842,32 @@ int WinMain(
 			UnpackBitmapBytes(buf.bytes, buf.size, image);
 			StringCchCopy(image->name, MAX_PATH, fileName);
 			imagesCount += 1;
+			if (IsStringEndsWith(fileName, (char*)"tileset.bmp")) {
+				int resolution = ParseTilesetResolution(fileName);	
+                int width = image->width / resolution;
+                int height = image->height / resolution;
+                for (int tileIndexX = 0; tileIndexX < width; tileIndexX++) {
+                    for (int tileIndexY = 0; tileIndexY < height; tileIndexY++) {
+                        int tileIndex = tileIndexX + tileIndexY * width;
+						Tile *tile = &allTiles[tilesCount];
+                        tile->width = resolution;
+                        tile->height = resolution;
+                        tile->index = tileIndex;
+                        tile->pixels = (uint32_t*)VirtualAlloc(0, resolution * resolution * 4, MEM_COMMIT, PAGE_READWRITE);
+			            StringCchCopy(tile->name, MAX_PATH, fileName);
+                        for (int tileX = 0; tileX < resolution; tileX++) {
+                            for (int tileY = 0; tileY < resolution; tileY++) {
+                                int pixelIndex = tileX + tileY * resolution;
+                                int imageX = tileX + resolution * tileIndexX;
+                                int imageY = tileY + resolution * tileIndexY;
+                                int imagePixelIndex = imageX + imageY * image->width;
+                                tile->pixels[pixelIndex] = image->pixels[imagePixelIndex];
+                            }
+                        }
+						tilesCount += 1;
+                    }
+                }
+			}
         }
         else if (IsStringEndsWith(fileName, (char*)".csv")) {
             Csv *csv= &allCsvs[csvCount];
@@ -824,6 +909,7 @@ int WinMain(
     
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
+    images[guy] = GetTile("gameboy.16tileset.bmp", 5);
     transforms[guy] = { {100, 50}, PI / 4, 80, 80 };
 
     EntityID fieldCam = AddEntity();
