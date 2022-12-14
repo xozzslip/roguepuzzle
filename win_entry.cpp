@@ -571,7 +571,7 @@ LARGE_INTEGER qpc() {
 
 float elapsedMs(LARGE_INTEGER start, LARGE_INTEGER end) {
     uint64_t elapsed = (end.QuadPart - start.QuadPart);
-    return float(elapsed) * 1000.0f / QpcFrequency;
+    return float(elapsed) * 1000.0f / float(QpcFrequency);
 }
 
 
@@ -810,8 +810,31 @@ int ParseTilesetResolution(char* fileName) {
 }
 
 
-void InitEntitesFromTileMap(const char *tilesetName, const char * csvName, int size) {
+void InitTileMap(
+    const char *tilemapName, 
+    const char *csvName,
+    float width,
+    float height 
+) {
     Csv csv = GetCsv(csvName);
+    int tileSize = ParseTilesetResolution((char *)tilemapName);
+    float scaleX = width / float(csv.width * tileSize);
+    float scaleY = height / float(csv.height * tileSize);
+    for (int csvX = 0; csvX < csv.width; csvX++) {
+        for (int csvY = 0; csvY < csv.height; csvY++) {
+            int tileIndex = csv.values[csvX + csvY * csv.width];
+            if (tileIndex == -1) {
+                continue;
+            }
+            float x = csvX * tileSize * scaleX;
+            float y = csvY * tileSize * scaleY;
+
+			EntityID entity = AddEntity();
+			images[entity] = GetTile(tilemapName, tileIndex);
+			transforms[entity] = { {x, y}, 0, tileSize * scaleX, tileSize * scaleY };
+        }
+    }
+
 }
 
 
@@ -924,6 +947,7 @@ int WinMain(
 
     EntityID guyCam = AddEntity();
     transforms[guyCam] = { {0, 0}, PI / 4, float(WindowWidth), float(WindowHeight) };
+    // InitTileMap("gameboy.16tileset.bmp", "lvl1.csv", float(WindowWidth), float(WindowHeight));
 
     char fps[10] = {};
     char maxFps[15] = {};
@@ -990,8 +1014,8 @@ int WinMain(
         }
         transforms[guyCam].angle = transforms[guy].angle;
 
-		StringCchPrintf(maxFps, 15, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         RenderFromCamera(cam);
+		StringCchPrintf(maxFps, 15, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         /*
         Image fieldImage = GetImage("test2.bmp");
         RenderRectangle({ float(WindowWidth) / 2, float(WindowHeight) / 2}, 0, float(WindowWidth), float(WindowHeight), &fieldImage);
