@@ -294,32 +294,29 @@ void UnpackCsvBytes(uint8_t* bytes, int bytesCount, Csv* csv) {
     int height = 0;
     valuesCount = 0;
 
-    uint8_t* row = bytes;
-    int bytesRead = 0;
-    while (bytesRead < bytesCount) {
+    uint8_t* next = bytes;
+    // parses CSV with /r/n as new line
+    while (next - bytes < bytesCount) {
         int valuesCountInRow = 0;
-        while (*row != '\r') {
+        while (*next != '\n') {
             int32_t value = 0;
             bool negative = false;
-            if (*row == '-') {
+            if (*next == '-') {
                 negative = true;
-                row++;
-                bytesRead += 1;
+                next++;
             }
-            while (isCharNumeric(*row)) {
+            while (isCharNumeric(*next)) {
                 value *= 10;
-                value += *row - '0';
-                row++;
-                bytesRead += 1;
+                value += *next - '0';
+                next++;
             }
             if (negative) {
                 value = -value;
             }
             values[valuesCount] = value;
-            valuesCountInRow++;
+            valuesCountInRow ++;
             valuesCount++;
-            row++;
-            bytesRead += 1;
+            next++;
         }
         if (width == 0 && valuesCountInRow != 0) {
             width = valuesCountInRow;
@@ -330,14 +327,15 @@ void UnpackCsvBytes(uint8_t* bytes, int bytesCount, Csv* csv) {
         if (valuesCountInRow != 0) {
             height++;
         }
-        row++;
-        row++; // \r\n
-        bytesRead += 2;
+        next++;
     }
     Assert(valuesCount % width == 0, "amount of csv values must be devidible by width\n");
     Assert(width > 0, "csv width must be non zero\n");
     Assert(height > 0, "csv height must be non zero\n");
     Assert(valuesCount > 0, "csv values count must be non zero\n");
+    csv->values = values;
+    csv->width = width;
+    csv->height = height;
 }
 
 
