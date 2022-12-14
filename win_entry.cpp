@@ -970,8 +970,8 @@ int WinMain(
     transforms[guyCam] = { {0, 0}, PI / 4, float(WindowWidth), float(WindowHeight) };
     InitTileMap("gameboy.16tileset.bmp", "lvl1.csv", float(WindowHeight) * 2, float(WindowHeight) * 2);
 
-    char fps[10] = {};
-    char maxFps[15] = {};
+    char fps[20] = {};
+    char maxFps[20] = {};
 
     LARGE_INTEGER startMeasure = qpc();
     int passedFrames = 0;
@@ -1036,7 +1036,7 @@ int WinMain(
         transforms[guyCam].angle = transforms[guy].angle;
 
         RenderFromCamera(cam);
-		StringCchPrintf(maxFps, 15, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
+		StringCchPrintf(maxFps, 20, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         /*
         Image fieldImage = GetImage("test2.bmp");
         RenderRectangle({ float(WindowWidth) / 2, float(WindowHeight) / 2}, 0, float(WindowWidth), float(WindowHeight), &fieldImage);
@@ -1065,7 +1065,7 @@ int WinMain(
         uint64_t passedMs = elapsedMs(startMeasure, qpc());
         passedFrames += 1;
         if (passedMs > 1000) {
-		    StringCchPrintf(fps, 10, "fps %d ", int(passedFrames / (double(passedMs) / 1000)));
+		    StringCchPrintf(fps, 20, "fps %d", int(passedFrames / (double(passedMs) / 1000)));
             passedFrames = 0;
             startMeasure = qpc();
         }
@@ -1075,14 +1075,14 @@ int WinMain(
 		  0,
 		  0,
           fps,
-		  10
+		  20
 		);
 		TextOutA(
           GetDC(hWnd),
 		  0,
 		  15,
           maxFps,
-		  15
+		  20
 		);
     } 
     return 0;
