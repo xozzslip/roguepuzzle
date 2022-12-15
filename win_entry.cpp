@@ -622,12 +622,12 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
     minY = max(0, minY);
     maxX = min(WindowWidth, maxX);
     maxY = min(WindowHeight, maxY);
-    /*
+#if 0
     maxX = WindowWidth;
     maxY = WindowHeight;
     minX = 0;
     minY = 0;
-    */
+#endif
     Vector origin = corners[0];
     Vector xAxis = corners[1] - origin;
     Vector yAxis = corners[2] - origin;
@@ -642,10 +642,14 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
     __m128 textureHeight = _mm_set_ps1(texture->height);
     __m128i textureWidthI = _mm_set1_epi32(texture->width);
     __m128i textureHeightI = _mm_set1_epi32(texture->height);
+    __m128i windowWidth = _mm_set1_epi32(WindowWidth);
     for (int y = minY; y < maxY; y++) {
+        __m128i yArray = _mm_set1_epi32(y);
 		__m128 distanceY = _mm_set_ps1(y - origin.y);
         for (int x = minX; x < maxX; x+=4){
-            __m128 distanceX = _mm_sub_ps(_mm_set_ps(x, x + 1, x + 2, x + 3), originX);
+            __m128i xArray = _mm_set_epi32(x, x + 1, x + 2, x + 3);
+            __m128i xArrayBounded = _mm_min_epi32(xArray, _mm_set1_epi32(WindowWidth - 1));
+            __m128 distanceX = _mm_sub_ps(_mm_cvtepi32_ps(xArrayBounded), originX);
             __m128 dotXAxis = _mm_add_ps(_mm_mul_ps(distanceX, xAxisX), _mm_mul_ps(distanceY, xAxisY));
             __m128 dotYAxis = _mm_add_ps(_mm_mul_ps(distanceX, yAxisX), _mm_mul_ps(distanceY, yAxisY));
             __m128 u = _mm_mul_ps(dotXAxis, xAxisSquareInv);
@@ -669,39 +673,37 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
             bool insideC = ((int32_t*)&inside)[2];
             bool insideD = ((int32_t*)&inside)[3];
             __m128i pixels = _mm_set1_epi32(0);
-            if (y == 349 && x == 348 && center.x == 300) {
-                DebugLog("xui\n");
-            }
+            __m128i windowIndex = _mm_add_epi32(muly(yArray, windowWidth), xArrayBounded);
             if (insideA) {
                 uint32_t pixel = texture->pixels[((uint32_t*)&textureIndex)[0]];
                 uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
-                int pixelIndex = x + y * WindowWidth + 3;
+                uint32_t i = ((uint32_t*)&windowIndex)[0];
                 if (entityAlpha > 0) {
-                    BitmapMemory[pixelIndex] = pixel;
+                    BitmapMemory[i] = pixel;
                 }
             }
             if (insideB) {
                 uint32_t pixel = texture->pixels[((uint32_t*)&textureIndex)[1]];
                 uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
-                int pixelIndex = x + y * WindowWidth + 2;
+                uint32_t i = ((uint32_t*)&windowIndex)[1];
                 if (entityAlpha > 0) {
-                    BitmapMemory[pixelIndex] = pixel;
+                    BitmapMemory[i] = pixel;
                 }
             }
             if (insideC) {
                 uint32_t pixel = texture->pixels[((uint32_t*)&textureIndex)[2]];
                 uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
-                int pixelIndex = x + y * WindowWidth + 1;
+                uint32_t i = ((uint32_t*)&windowIndex)[2];
                 if (entityAlpha > 0) {
-                    BitmapMemory[pixelIndex] = pixel;
+                    BitmapMemory[i] = pixel;
                 }
             }
             if (insideD) {
                 uint32_t pixel = texture->pixels[((uint32_t*)&textureIndex)[3]];
                 uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
-                int pixelIndex = x + y * WindowWidth + 0;
+                uint32_t i = ((uint32_t*)&windowIndex)[3];
                 if (entityAlpha > 0) {
-                    BitmapMemory[pixelIndex] = pixel;
+                    BitmapMemory[i] = pixel;
                 }
             }
 
@@ -980,6 +982,8 @@ int WinMain(
     EntityID field = AddEntity();
     images[field] = GetTile("gameboy.16tileset.bmp", 7);
     transforms[field] = { {0, 0}, 0, float(WindowHeight) * 2, float(WindowHeight) * 2};
+
+    InitTileMap("gameboy.16tileset.bmp", "lvl1.csv", float(WindowHeight) * 2, float(WindowHeight) * 2);
     
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
@@ -990,7 +994,6 @@ int WinMain(
 
     EntityID guyCam = AddEntity();
     transforms[guyCam] = { {0, 0}, PI / 4, float(WindowWidth), float(WindowHeight) };
-    InitTileMap("gameboy.16tileset.bmp", "lvl1.csv", float(WindowHeight) * 2, float(WindowHeight) * 2);
 
     char fps[20] = {};
     char maxFps[20] = {};
@@ -1059,13 +1062,11 @@ int WinMain(
 
         /* render to buffer */
         RenderFromCamera(cam);
-        /*
-        Image img = GetTile("gameboy.16tileset.bmp", 7);
-        Image img2 = GetTile("gameboy.16tileset.bmp", 12);
-        RenderRectangle({ 350, 350}, 0, 100, 100, &img);
-        RenderRectangle({ 400, 300 }, 0, 400, 400, &img2);
-        RenderGrid();
-        */
+        //Image img = GetTile("gameboy.16tileset.bmp", 7);
+        //Image img2 = GetTile("gameboy.16tileset.bmp", 12);
+        //RenderRectangle({ 1500, 350}, PI/8, 555, 100, &img);
+        //RenderRectangle({ 400, 300 }, 0, 400, 400, &img2);
+        //RenderGrid();
         
         /* frame independent rate */
 		StringCchPrintf(maxFps, 20, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
