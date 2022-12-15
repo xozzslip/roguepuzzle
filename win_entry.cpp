@@ -617,10 +617,17 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
             maxY = corner.y;
         }
     }
-    minX = max(0, minX - 4);
-    minY = max(0, minY - 4);
-    maxX = min(WindowWidth, maxX + 4);
-    maxY = min(WindowHeight, maxY + 4);
+
+    minX = max(0, minX);
+    minY = max(0, minY);
+    maxX = min(WindowWidth, maxX);
+    maxY = min(WindowHeight, maxY);
+    /*
+    maxX = WindowWidth;
+    maxY = WindowHeight;
+    minX = 0;
+    minY = 0;
+    */
     Vector origin = corners[0];
     Vector xAxis = corners[1] - origin;
     Vector yAxis = corners[2] - origin;
@@ -645,23 +652,26 @@ void RenderRectangle(Vector center, float angle, float width, float height, Imag
             __m128 v = _mm_mul_ps(dotYAxis, yAxisSquareInv);
             __m128 tx = _mm_mul_ps(u, textureWidth);
             __m128 ty = _mm_mul_ps(v, textureHeight);
+            __m128i uInside = _mm_and_si128(
+                _mm_castps_si128(_mm_cmpge_ps(u, _mm_set_ps1(0))),
+                _mm_castps_si128(_mm_cmple_ps(u, _mm_set_ps1(1)))
+            );
+            __m128i vInside = _mm_and_si128(
+                _mm_castps_si128(_mm_cmpge_ps(v, _mm_set_ps1(0))),
+                _mm_castps_si128(_mm_cmple_ps(v, _mm_set_ps1(1)))
+            );
+            __m128i inside = _mm_and_si128(uInside, vInside);
             __m128i txi = _mm_cvttps_epi32(tx);
             __m128i tyi = _mm_cvttps_epi32(ty);
             __m128i textureIndex = _mm_add_epi32(txi, muly(tyi, textureWidthI));
-            __m128i txInside = _mm_and_si128(
-                _mm_cmpgt_epi32(txi, _mm_set1_epi32(-1)), 
-                _mm_cmplt_epi32(txi, textureWidthI)
-            );
-            __m128i tyInside = _mm_and_si128(
-                _mm_cmpgt_epi32(tyi, _mm_set1_epi32(-1)),
-                _mm_cmplt_epi32(tyi, textureHeightI)
-            );
-            __m128i inside = _mm_and_si128(txInside, tyInside);
-            int32_t insideA = ((int32_t*)&inside)[0];
-            int32_t insideB = ((int32_t*)&inside)[1];
-            int32_t insideC = ((int32_t*)&inside)[2];
-            int32_t insideD = ((int32_t*)&inside)[3];
+            bool insideA = ((int32_t*)&inside)[0];
+            bool insideB = ((int32_t*)&inside)[1];
+            bool insideC = ((int32_t*)&inside)[2];
+            bool insideD = ((int32_t*)&inside)[3];
             __m128i pixels = _mm_set1_epi32(0);
+            if (y == 349 && x == 348 && center.x == 300) {
+                DebugLog("xui\n");
+            }
             if (insideA) {
                 uint32_t pixel = texture->pixels[((uint32_t*)&textureIndex)[0]];
                 uint32_t entityAlpha = uint32_t(pixel & 0xff000000);
@@ -703,12 +713,21 @@ void RenderGrid() {
     for (int x = 0; x < WindowWidth; x++) {
         for (int y = 0; y < WindowHeight; y++) {
             int pixelIndex = x + y * WindowWidth;
+            if ((x % 100) == 0) {
+                BitmapMemory[pixelIndex] = 2390942;
+            }
+            if ((y % 100) == 0) {
+                BitmapMemory[pixelIndex] = 2390942;
+            }
+
+            /*
             if (x == WindowWidth / 2) {
                 BitmapMemory[pixelIndex] = 2390942;
             }
             if (y == WindowHeight / 2) {
                 BitmapMemory[pixelIndex] = 2390942;
             }
+            */
         }
     }
 }
@@ -838,24 +857,27 @@ void InitTileMap(
     float height 
 ) {
     Csv csv = GetCsv(csvName);
-    int tileSize = ParseTilesetResolution((char *)tilemapName);
-    float scaleX = width / float(csv.width * tileSize);
-    float scaleY = height / float(csv.height * tileSize);
+    float tileSize = float(ParseTilesetResolution((char*)tilemapName));
+    float scaleX = width / (float(csv.width) * tileSize);
+    float scaleY = height / (float(csv.height) * tileSize);
     for (int csvX = 0; csvX < csv.width; csvX++) {
         for (int csvY = 0; csvY < csv.height; csvY++) {
             int tileIndex = csv.values[csvX + csvY * csv.width];
             if (tileIndex == -1) {
                 continue;
             }
-            float x = csvX * tileSize * scaleX;
-            float y = csvY * tileSize * scaleY;
+            float x = float(csvX) * tileSize * scaleX;
+            float y = float(csvY) * tileSize * scaleY;
 
 			EntityID entity = AddEntity();
 			images[entity] = GetTile(tilemapName, tileIndex);
-			transforms[entity] = { {x - width / 2, y - height/ 2}, 0, tileSize * scaleX, tileSize * scaleY };
+            Vector center = {
+                x - width / 2 + scaleX * tileSize / 2,
+                y - height / 2 + scaleY * tileSize / 2,
+            };
+			transforms[entity] = {center, 0, tileSize * scaleX, tileSize * scaleY };
         }
     }
-
 }
 
 
@@ -978,7 +1000,7 @@ int WinMain(
 
     Image fieldImage = GetImage("highres.bmp");
     LARGE_INTEGER previousFrameRenderedAtCounter = LARGE_INTEGER{};
-    float frameRate = 60;
+    float frameRate = 30;
     float frameDurationMs = 1000.0f / frameRate;
     while (Running) {
         LARGE_INTEGER frameCounter = qpc();
@@ -1035,21 +1057,24 @@ int WinMain(
         }
         transforms[guyCam].angle = transforms[guy].angle;
 
+        /* render to buffer */
         RenderFromCamera(cam);
-		StringCchPrintf(maxFps, 20, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         /*
-        Image fieldImage = GetImage("test2.bmp");
-        RenderRectangle({ float(WindowWidth) / 2, float(WindowHeight) / 2}, 0, float(WindowWidth), float(WindowHeight), &fieldImage);
+        Image img = GetTile("gameboy.16tileset.bmp", 7);
+        Image img2 = GetTile("gameboy.16tileset.bmp", 12);
+        RenderRectangle({ 350, 350}, 0, 100, 100, &img);
+        RenderRectangle({ 400, 300 }, 0, 400, 400, &img2);
+        RenderGrid();
         */
+        
+        /* frame independent rate */
+		StringCchPrintf(maxFps, 20, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         while (true) {
             float elapsed = elapsedMs(previousFrameRenderedAtCounter, qpc());
             if (elapsed >= frameDurationMs) {
                 break;
             }
         }
-
-        // RenderGrid();
-
         StretchDIBits(
             GetDC(hWnd),
             0, 0, WindowWidth, WindowHeight,
@@ -1065,7 +1090,7 @@ int WinMain(
         uint64_t passedMs = elapsedMs(startMeasure, qpc());
         passedFrames += 1;
         if (passedMs > 1000) {
-		    StringCchPrintf(fps, 20, "fps %d", int(passedFrames / (double(passedMs) / 1000)));
+		    StringCchPrintf(fps, 20, "fps %.2f", float(passedFrames / (double(passedMs) / 1000)));
             passedFrames = 0;
             startMeasure = qpc();
         }
