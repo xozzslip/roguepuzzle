@@ -6,6 +6,7 @@
 #include <strsafe.h>
 #include <math.h>
 #include <windowsx.h>
+#include "math.h"
 
 
 typedef struct {
@@ -27,73 +28,6 @@ typedef struct {
     int32_t* values;
 } Csv;
 
-typedef struct {
-    float x;
-    float y;
-} Vector;
-
-inline Vector
-operator-(Vector a, Vector b)
-{
-  Vector result;
-  result.x = a.x - b.x;
-  result.y = a.y - b.y;
-  return result;
-}
-
-inline Vector
-operator+(Vector a, Vector b)
-{
-  Vector result;
-  result.x = a.x + b.x;
-  result.y = a.y + b.y;
-  return result;
-}
-
-inline Vector
-operator+=(Vector &a, Vector b)
-{
-  a = a + b;
-  return a;
-}
-
-inline Vector
-operator-=(Vector &a, Vector b)
-{
-  a = a - b;
-  return a;
-}
-
-inline Vector
-operator-(Vector a)
-{
-  Vector result;
-  result.x = -a.x;
-  result.y = -a.y;
-  return result;
-}
-
-
-inline Vector
-operator*(float a, Vector b)
-{
-  Vector result = { a * b.x, a * b.y };
-  return result;
-}
-
-inline Vector
-operator*(Vector b, float a)
-{
-  Vector result = a * b;
-  return result;
-}
-
-inline Vector
-operator*=(Vector &a, float b)
-{
-  a = b * a;
-  return a;
-}
 
 typedef struct {
     char name[MAX_PATH];
@@ -119,6 +53,14 @@ typedef struct {
 
 
 typedef struct {
+    bool collider;
+    bool opaque;
+    Vector acceleration;
+    Vector speed;  
+    float maxSpeed;
+} Body;
+
+typedef struct {
     bool up;
     bool down;
     bool left;
@@ -126,6 +68,7 @@ typedef struct {
     int mouseX; 
     int mouseY;
     bool shift;
+    bool M;
 } UserInput;
 
 typedef int EntityID;
@@ -143,6 +86,8 @@ static bool Running = true;
 static const int MAX_ENTITIES = 1000;
 static Transform transforms[MAX_ENTITIES];
 static Image images[MAX_ENTITIES];
+static Tile tiles[MAX_ENTITIES];
+static Body bodies[MAX_ENTITIES];
 static int entitiesCount;
 static int imagesCount;
 static int assetsCount;
@@ -165,7 +110,17 @@ void Assert(bool expression,const char* error) {
 }
 
 
-Image GetTile(const char* bmpName, int tileIndex) {
+Image TileToImage(Tile tile) {
+    Image img = {0};
+    img.height = tile.height;
+    img.width = tile.width;
+    img.pixels = tile.pixels;
+    StringCchCopy(img.name, MAX_PATH, tile.name);
+    return img;
+}
+
+
+Tile GetTile(const char* bmpName, int tileIndex) {
     bool found = false;
     Tile* tile = NULL;
     for (int i = 0; i < tilesCount; i++) {
@@ -178,12 +133,7 @@ Image GetTile(const char* bmpName, int tileIndex) {
     if (!found) {
         FatalError("failed get tile by filename and index %s %d\n", bmpName, tileIndex);
     }
-    Image img = {0};
-    img.height = tile->height;
-    img.width = tile->width;
-    img.pixels = tile->pixels;
-    StringCchCopy(img.name, MAX_PATH, tile->name);
-    return img;
+    return *tile;
 }
 
 Image GetImage(const char* bmpName) {
@@ -233,32 +183,6 @@ Asset GetAsset(const char* filename) {
         FatalError("failed get asset by filename %s\n", filename);
     }
     return *asset;
-}
-
-Vector RotateVector(Vector vector, float alpha) {
-    double cosAlpha = cos(alpha);
-    double sinAlpha = sin(alpha);
-    // signs are specific for our coordinate system
-    float newX = vector.x * cosAlpha + vector.y * sinAlpha;
-    float newY = -vector.x * sinAlpha + vector.y * cosAlpha;
-    Vector result = { newX, newY };
-    return result;
-}
-
-
-double VectorLength(int x, int y) {
-    return sqrt(double(x) * double(x) + double(y) * double(y));
-}
-
-double AngleBetween(int fromX, int fromY, int toX, int toY){
-    double lengthFrom = VectorLength(fromX, fromY);
-    double lengthTo = VectorLength(toX, toY);
-    double cosAlpha = double(fromX) * double(toX) + double(fromY) * double(toY) / lengthFrom / lengthTo;
-    double alpha = acos(cosAlpha);
-    if (double(fromX) * double(toY) > double(fromY) * double(toX)) {
-        alpha = -alpha;
-    }
-    return alpha;
 }
 
 
@@ -522,6 +446,9 @@ LRESULT WindowProcA(
         else if (wParam == 'A') {
             Input.left = true;
         }
+        else if (wParam == 'M') {
+            Input.M = true;
+        }
         else if (wParam == VK_SHIFT) {
             Input.shift = true;
         }
@@ -542,6 +469,9 @@ LRESULT WindowProcA(
         }
         else if (wParam == VK_SHIFT) {
             Input.shift = false;
+        }
+        else if (wParam == 'M') {
+            Input.M = false;
         }
     } break;
     case WM_MOUSEMOVE:
@@ -574,10 +504,6 @@ float elapsedMs(LARGE_INTEGER start, LARGE_INTEGER end) {
     return float(elapsed) * 1000.0f / float(QpcFrequency);
 }
 
-
-inline float Dot(Vector a, Vector b) {
-    return a.x * b.x + a.y * b.y;
-}
 
 static inline __m128i muly(const __m128i &a, const __m128i &b)
 {
@@ -871,14 +797,33 @@ void InitTileMap(
             float x = float(csvX) * tileSize * scaleX;
             float y = float(csvY) * tileSize * scaleY;
 
+            Tile tile = GetTile(tilemapName, tileIndex);
 			EntityID entity = AddEntity();
-			images[entity] = GetTile(tilemapName, tileIndex);
+            tiles[entity] = tile;
+            images[entity] = TileToImage(tile);
             Vector center = {
                 x - width / 2 + scaleX * tileSize / 2,
                 y - height / 2 + scaleY * tileSize / 2,
             };
 			transforms[entity] = {center, 0, tileSize * scaleX, tileSize * scaleY };
+            if (tile.index != 6 && tile.index != 7 && tile.index != 13 && tile.index != 14) {
+                bodies[entity].collider = true;
+                bodies[entity].opaque = true;
+            }
         }
+    }
+}
+
+
+void SimulatePhysics(float timeDeltaMs) {
+    float dt = timeDeltaMs / 1000.0f;
+    for (EntityID entity = 0; entity < entitiesCount; entity++) {
+        Body *body = &bodies[entity];
+        body->speed += body->acceleration * dt;
+        if (body->maxSpeed > 0 && VectorLength(body->speed) > body->maxSpeed) {
+            body->speed = body->speed / VectorLength(body->speed) * body->maxSpeed;
+        }
+        transforms[entity].center += body->speed * dt;
     }
 }
 
@@ -980,14 +925,16 @@ int WinMain(
     int frame = 0;
 
     EntityID field = AddEntity();
-    images[field] = GetTile("gameboy.16tileset.bmp", 7);
+    images[field] = TileToImage(GetTile("gameboy.16tileset.bmp", 7));
     transforms[field] = { {0, 0}, 0, float(WindowHeight) * 2, float(WindowHeight) * 2};
 
     InitTileMap("gameboy.16tileset.bmp", "lvl1.csv", float(WindowHeight) * 2, float(WindowHeight) * 2);
+
     
     EntityID guy = AddEntity();
     images[guy] = GetImage("character.bmp");
     transforms[guy] = { {0, 0}, PI / 4, 80, 80 };
+    bodies[guy] = { true, true, {0}, {0}, 700};
 
     EntityID fieldCam = AddEntity();
     transforms[fieldCam] = { {0, 0}, 0, float(WindowWidth), float(WindowHeight)};
@@ -995,16 +942,16 @@ int WinMain(
     EntityID guyCam = AddEntity();
     transforms[guyCam] = { {0, 0}, PI / 4, float(WindowWidth), float(WindowHeight) };
 
-    char fps[20] = {};
-    char maxFps[20] = {};
+    char fpsDebugOutput[20] = {};
+    char computationDebugOutput[20] = {};
 
     LARGE_INTEGER startMeasure = qpc();
     int passedFrames = 0;
 
     Image fieldImage = GetImage("highres.bmp");
     LARGE_INTEGER previousFrameRenderedAtCounter = LARGE_INTEGER{};
-    float frameRate = 30;
-    float frameDurationMs = 1000.0f / frameRate;
+    float fps = 30;
+    float frameDurationMs = 1000.0f / fps;
     while (Running) {
         LARGE_INTEGER frameCounter = qpc();
         frame++;
@@ -1040,26 +987,45 @@ int WinMain(
             for (int i = 0; i < 4; i++) {
                 wasd[i] = RotateVector(wasd[i], transforms[guy].angle);
             }
-            float speed = 8;
+
+            //bodies[guy].speed = RotateVector(bodies[guy].speed, transforms[guy].angle);
+            float accelerationModule = 2800;
+            Vector go = { 0, 0 };
             if (Input.up) {
-                transforms[guy].center += wasd[0] * speed;
+                go += wasd[0];
             }
             if (Input.left) {
-                transforms[guy].center += wasd[1] * speed;
+                go += wasd[1];
             }
             if (Input.down) {
-                transforms[guy].center += wasd[2] * speed;
+                go += wasd[2];
             }
             if (Input.right) {
-                transforms[guy].center += wasd[3] * speed;
+                go += wasd[3];
             }
-            transforms[guyCam].center = transforms[guy].center + wasd[0] * 250;
-            if (Input.shift) {
+            if (VectorLength(go) > 0) {
+                //bodies[guy].acceleration = acceleration / VectorLength(acceleration) * accelerationModule;
+                if (Input.shift) {
+                    bodies[guy].speed = go / VectorLength(go) * 2000;
+                } else {
+                    bodies[guy].acceleration = go / VectorLength(go) * 500;
+                }
+
+            }
+            else {
+                bodies[guy].acceleration = { 0 };
+                bodies[guy].speed = { 0 };
+            }
+            //bodies[guy].speed = RotateVector(bodies[guy].speed, angle);
+            if (Input.M) {
                 cam = fieldCam;
             }
         }
-        transforms[guyCam].angle = transforms[guy].angle;
 
+        SimulatePhysics(frameDurationMs);
+
+		transforms[guyCam].angle = transforms[guy].angle;
+        transforms[guyCam].center = transforms[guy].center + RotateVector({ 0, -1 }, transforms[guy].angle) * 250;
         /* render to buffer */
         RenderFromCamera(cam);
         //Image img = GetTile("gameboy.16tileset.bmp", 7);
@@ -1069,7 +1035,7 @@ int WinMain(
         //RenderGrid();
         
         /* frame independent rate */
-		StringCchPrintf(maxFps, 20, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
+		StringCchPrintf(computationDebugOutput, 20, "compute %.2fms", float(elapsedMs(frameCounter, qpc())));
         while (true) {
             float elapsed = elapsedMs(previousFrameRenderedAtCounter, qpc());
             if (elapsed >= frameDurationMs) {
@@ -1091,7 +1057,7 @@ int WinMain(
         uint64_t passedMs = elapsedMs(startMeasure, qpc());
         passedFrames += 1;
         if (passedMs > 1000) {
-		    StringCchPrintf(fps, 20, "fps %.2f", float(passedFrames / (double(passedMs) / 1000)));
+		    StringCchPrintf(fpsDebugOutput, 20, "fps %.2f", float(passedFrames / (double(passedMs) / 1000)));
             passedFrames = 0;
             startMeasure = qpc();
         }
@@ -1100,14 +1066,14 @@ int WinMain(
           GetDC(hWnd),
 		  0,
 		  0,
-          fps,
+          fpsDebugOutput,
 		  20
 		);
 		TextOutA(
           GetDC(hWnd),
 		  0,
 		  15,
-          maxFps,
+          computationDebugOutput,
 		  20
 		);
     } 
